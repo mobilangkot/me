@@ -1,20 +1,21 @@
 local RS      = game:GetService("ReplicatedStorage")
 local Players = game:GetService("Players")
 local LP      = Players.LocalPlayer
+local char    = LP.Character or LP.CharacterAdded:Wait()
 
 local remotes    = RS:FindFirstChild("Remotes")
 local babyAction = remotes and remotes:FindFirstChild("BabyAction")
 local dropBaby   = remotes and remotes:FindFirstChild("DropBaby")
 
 -- =============================================
--- GUI minimal
+-- GUI
 -- =============================================
 local gui = Instance.new("ScreenGui", LP:WaitForChild("PlayerGui"))
-gui.Name = "BabyDebug"
+gui.Name = "BabyV2"
 gui.ResetOnSpawn = false
 
 local frame = Instance.new("Frame", gui)
-frame.Size             = UDim2.new(0, 460, 0, 560)
+frame.Size             = UDim2.new(0, 420, 0, 500)
 frame.Position         = UDim2.new(0, 10, 0, 10)
 frame.BackgroundColor3 = Color3.fromRGB(12, 12, 16)
 frame.Active           = true
@@ -22,37 +23,39 @@ frame.Draggable        = true
 frame.BorderSizePixel  = 0
 Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 10)
 
--- Title
 local title = Instance.new("TextLabel", frame)
-title.Size            = UDim2.new(1, 0, 0, 30)
-title.BackgroundColor3 = Color3.fromRGB(20, 20, 28)
-title.TextColor3      = Color3.fromRGB(255,255,255)
-title.Font            = Enum.Font.GothamBold
-title.TextSize        = 13
-title.Text            = "  🍼 Baby Debug"
-title.TextXAlignment  = Enum.TextXAlignment.Left
-title.BorderSizePixel = 0
+title.Size             = UDim2.new(1, 0, 0, 32)
+title.BackgroundColor3 = Color3.fromRGB(20, 20, 30)
+title.TextColor3       = Color3.fromRGB(255, 255, 255)
+title.Font             = Enum.Font.GothamBold
+title.TextSize         = 13
+title.Text             = "  🍼  Baby Auto v2  —  menzcreate"
+title.TextXAlignment   = Enum.TextXAlignment.Left
+title.BorderSizePixel  = 0
 Instance.new("UICorner", title).CornerRadius = UDim.new(0, 10)
 
--- Status remote
-local statusLbl = Instance.new("TextLabel", frame)
-statusLbl.Position        = UDim2.new(0, 8, 0, 34)
-statusLbl.Size            = UDim2.new(1, -16, 0, 18)
-statusLbl.BackgroundTransparency = 1
-statusLbl.TextColor3      = babyAction
-    and Color3.fromRGB(80, 220, 130)
-    or  Color3.fromRGB(255, 80, 80)
-statusLbl.Font            = Enum.Font.Gotham
-statusLbl.TextSize        = 11
-statusLbl.TextXAlignment  = Enum.TextXAlignment.Left
-statusLbl.Text            = babyAction
-    and "✅ BabyAction & DropBaby found"
-    or  "⚠ Remote tidak ditemukan"
+-- Status bar
+local statusBar = Instance.new("Frame", frame)
+statusBar.Position         = UDim2.new(0, 8, 0, 38)
+statusBar.Size             = UDim2.new(1, -16, 0, 22)
+statusBar.BackgroundColor3 = Color3.fromRGB(18, 18, 26)
+statusBar.BorderSizePixel  = 0
+Instance.new("UICorner", statusBar).CornerRadius = UDim.new(0, 6)
 
--- Buttons row
+local statusLbl = Instance.new("TextLabel", statusBar)
+statusLbl.Size               = UDim2.new(1, -10, 1, 0)
+statusLbl.Position           = UDim2.new(0, 8, 0, 0)
+statusLbl.BackgroundTransparency = 1
+statusLbl.TextColor3         = Color3.fromRGB(160, 160, 180)
+statusLbl.Font               = Enum.Font.Gotham
+statusLbl.TextSize           = 11
+statusLbl.TextXAlignment     = Enum.TextXAlignment.Left
+statusLbl.Text               = "Idle..."
+
+-- Buttons
 local function makeBtn(text, x, w, col)
     local b = Instance.new("TextButton", frame)
-    b.Position         = UDim2.new(0, x, 0, 56)
+    b.Position         = UDim2.new(0, x, 0, 66)
     b.Size             = UDim2.new(0, w, 0, 28)
     b.BackgroundColor3 = col
     b.TextColor3       = Color3.new(1,1,1)
@@ -65,20 +68,19 @@ local function makeBtn(text, x, w, col)
     return b
 end
 
-local btn_fireAction = makeBtn("▶ BabyAction",  8,   105, Color3.fromRGB(30,80,200))
-local btn_fireDrop   = makeBtn("▶ DropBaby",    118, 95,  Color3.fromRGB(30,80,200))
-local btn_scan       = makeBtn("🔍 Scan Prompt", 218, 110, Color3.fromRGB(60,60,80))
-local btn_autoFire   = makeBtn("🤖 Auto: OFF",   333, 90,  Color3.fromRGB(60,60,80))
-local btn_clear      = makeBtn("🗑",              428, 30,  Color3.fromRGB(120,30,30))
+local btnScan  = makeBtn("🔍 Scan Prompt",  8,   120, Color3.fromRGB(40, 80, 180))
+local btnAuto  = makeBtn("🤖 Auto: OFF",    134, 110, Color3.fromRGB(50, 50, 65))
+local btnClear = makeBtn("🗑 Clear",         250, 80,  Color3.fromRGB(120, 30, 30))
+local btnTest  = makeBtn("⚡ Test Fire",     336, 80,  Color3.fromRGB(30, 110, 60))
 
--- Scroll log
+-- Scroll
 local scroll = Instance.new("ScrollingFrame", frame)
-scroll.Position            = UDim2.new(0, 8, 0, 90)
-scroll.Size                = UDim2.new(1, -16, 1, -98)
+scroll.Position            = UDim2.new(0, 8, 0, 102)
+scroll.Size                = UDim2.new(1, -16, 1, -110)
 scroll.BackgroundColor3    = Color3.fromRGB(10, 10, 14)
 scroll.BorderSizePixel     = 0
 scroll.ScrollBarThickness  = 4
-scroll.ScrollBarImageColor3 = Color3.fromRGB(80,120,255)
+scroll.ScrollBarImageColor3 = Color3.fromRGB(255, 160, 30)
 scroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
 scroll.CanvasSize          = UDim2.new(0,0,0,0)
 Instance.new("UICorner", scroll).CornerRadius = UDim.new(0, 7)
@@ -87,26 +89,26 @@ local layout = Instance.new("UIListLayout", scroll)
 layout.SortOrder = Enum.SortOrder.LayoutOrder
 layout.Padding   = UDim.new(0, 1)
 
-local pad = Instance.new("UIPadding", scroll)
-pad.PaddingLeft  = UDim.new(0, 5)
-pad.PaddingTop   = UDim.new(0, 4)
-pad.PaddingRight = UDim.new(0, 5)
+local padInner = Instance.new("UIPadding", scroll)
+padInner.PaddingLeft  = UDim.new(0, 5)
+padInner.PaddingTop   = UDim.new(0, 4)
+padInner.PaddingRight = UDim.new(0, 5)
 
 -- =============================================
 -- Log
 -- =============================================
-local lines = {}
-local order = 0
+local logLines = {}
+local order    = 0
 
 local C = {
-    white   = Color3.fromRGB(220, 220, 220),
-    green   = Color3.fromRGB(80,  220, 130),
-    yellow  = Color3.fromRGB(255, 220, 60),
-    blue    = Color3.fromRGB(80,  180, 255),
-    red     = Color3.fromRGB(255, 80,  80),
-    orange  = Color3.fromRGB(255, 160, 30),
-    grey    = Color3.fromRGB(100, 100, 120),
-    div     = Color3.fromRGB(30,  30,  45),
+    white  = Color3.fromRGB(220, 220, 220),
+    green  = Color3.fromRGB(80,  220, 130),
+    yellow = Color3.fromRGB(255, 220, 60),
+    blue   = Color3.fromRGB(80,  180, 255),
+    red    = Color3.fromRGB(255, 80,  80),
+    orange = Color3.fromRGB(255, 160, 30),
+    grey   = Color3.fromRGB(100, 100, 120),
+    div    = Color3.fromRGB(28,  28,  42),
 }
 
 local function log(text, color)
@@ -123,157 +125,197 @@ local function log(text, color)
     l.Text               = text
     l.LayoutOrder        = order
     task.defer(function() scroll.CanvasPosition = Vector2.new(0, math.huge) end)
-    table.insert(lines, l)
-    if #lines > 400 then table.remove(lines,1):Destroy() end
+    table.insert(logLines, l)
+    if #logLines > 400 then table.remove(logLines, 1):Destroy() end
 end
 
-local function div() log("─────────────────────────────────────────", C.div) end
-
-local function clearLog()
-    for _, l in ipairs(lines) do pcall(function() l:Destroy() end) end
-    lines = {}
-    order = 0
+local function div()
+    log("─────────────────────────────────────────", C.div)
 end
 
--- =============================================
--- Logic
--- =============================================
-
--- Listen remote
-local function listenAll()
-    if babyAction then
-        pcall(function()
-            babyAction.OnClientEvent:Connect(function(...)
-                div()
-                log("📥 [BabyAction] RECEIVED", C.yellow)
-                local args = {...}
-                if #args == 0 then log("   (no args)", C.grey) end
-                for i, v in ipairs(args) do
-                    log("   arg["..i.."] "..typeof(v).." = "..tostring(v), C.yellow)
-                    if typeof(v) == "Instance" then
-                        log("   path: "..v:GetFullName(), C.grey)
-                        pcall(function()
-                            for k, av in pairs(v:GetAttributes()) do
-                                log("     attr "..k.." = "..tostring(av), C.orange)
-                            end
-                        end)
-                        pcall(function()
-                            for _, c in ipairs(v:GetChildren()) do
-                                if c:IsA("StringValue") or c:IsA("IntValue") or c:IsA("NumberValue") then
-                                    log("     child "..c.Name.." = "..tostring(c.Value), C.orange)
-                                end
-                            end
-                        end)
-                    end
-                end
-            end)
-        end)
-        log("✅ Listening: BabyAction", C.green)
-    else
-        log("⚠ BabyAction tidak ditemukan", C.red)
-    end
-
-    if dropBaby then
-        pcall(function()
-            dropBaby.OnClientEvent:Connect(function(...)
-                div()
-                log("📥 [DropBaby] RECEIVED", C.blue)
-                local args = {...}
-                if #args == 0 then log("   (no args)", C.grey) end
-                for i, v in ipairs(args) do
-                    log("   arg["..i.."] "..typeof(v).." = "..tostring(v), C.blue)
-                end
-            end)
-        end)
-        log("✅ Listening: DropBaby", C.green)
-    else
-        log("⚠ DropBaby tidak ditemukan", C.red)
-    end
+local function setStatus(text, color)
+    statusLbl.Text      = text
+    statusLbl.TextColor3 = color or C.white
 end
 
--- Fire remote
-btn_fireAction.MouseButton1Click:Connect(function()
-    if not babyAction then log("⚠ BabyAction not found", C.red) return end
-    div()
-    log("🔵 Fire BabyAction...", C.blue)
-    local ok, err = pcall(function() babyAction:FireServer() end)
-    log(ok and "   ✅ sent" or "   ❌ "..tostring(err), ok and C.green or C.red)
-end)
-
-btn_fireDrop.MouseButton1Click:Connect(function()
-    if not dropBaby then log("⚠ DropBaby not found", C.red) return end
-    div()
-    log("🔵 Fire DropBaby...", C.blue)
-    local ok, err = pcall(function() dropBaby:FireServer() end)
-    log(ok and "   ✅ sent" or "   ❌ "..tostring(err), ok and C.green or C.red)
-end)
-
--- Scan prompt
-local foundPrompts = {}
-
-btn_scan.MouseButton1Click:Connect(function()
-    foundPrompts = {}
-    div()
-    log("🔍 Scanning prompt 'baby'...", C.orange)
-    for _, obj in ipairs(workspace:GetDescendants()) do
-        if obj:IsA("ProximityPrompt") then
-            local at = string.lower(obj.ActionText or "")
-            local ot = string.lower(obj.ObjectText or "")
-                if string.find(at,"Baby") or string.find(ot,"Baby") then
-                table.insert(foundPrompts, obj)
-                pcall(function() obj.MaxActivationDistance = 9999 end)
-                log("📌 "..obj:GetFullName(), C.orange)
-                log("   Action: \""..obj.ActionText.."\"  Object: \""..obj.ObjectText.."\"", C.grey)
-                log("   Enabled:"..tostring(obj.Enabled).."  MaxDist:"..tostring(obj.MaxActivationDistance), C.grey)
-
-                -- fire langsung
-                local ok, err = pcall(function() fireproximityprompt(obj) end)
-                log("   fireproximityprompt: "..(ok and "✅ OK" or "❌ "..tostring(err)),
-                    ok and C.green or C.red)
-            end
-        end
-    end
-    log("Total: "..#foundPrompts, #foundPrompts > 0 and C.green or C.red)
-end)
-
--- Auto fire
-local AUTO_ON = false
-btn_autoFire.MouseButton1Click:Connect(function()
-    AUTO_ON = not AUTO_ON
-    btn_autoFire.Text             = AUTO_ON and "🤖 Auto: ON" or "🤖 Auto: OFF"
-    btn_autoFire.BackgroundColor3 = AUTO_ON
-        and Color3.fromRGB(160, 80, 10)
-        or  Color3.fromRGB(60, 60, 80)
-    log("🤖 Auto ".. (AUTO_ON and "ON" or "OFF"), C.orange)
-end)
-
-task.spawn(function()
-    while true do
-        task.wait(0.8)
-        if not AUTO_ON or #foundPrompts == 0 then continue end
-        for _, p in ipairs(foundPrompts) do
-            if p and p.Parent then
-                local ok, err = pcall(function() fireproximityprompt(p) end)
-                if not ok then
-                    log("❌ auto fire: "..tostring(err), C.red)
-                end
-            end
-        end
-    end
-end)
-
-btn_clear.MouseButton1Click:Connect(function()
-    clearLog()
+btnClear.MouseButton1Click:Connect(function()
+    for _, l in ipairs(logLines) do pcall(function() l:Destroy() end) end
+    logLines = {}
+    order    = 0
     log("🗑 cleared", C.grey)
 end)
 
 -- =============================================
+-- Prompt scanner
+-- =============================================
+local foundPrompts = {}
+
+local function isBabyPrompt(obj)
+    if not obj:IsA("ProximityPrompt") then return false end
+    -- "Baby" kapital sesuai hasil analisis
+    return obj.ActionText == "Baby" or obj.ObjectText == "Baby"
+end
+
+local function getPrompts()
+    foundPrompts = {}
+    for _, obj in ipairs(workspace:GetDescendants()) do
+        if isBabyPrompt(obj) then
+            pcall(function()
+                obj.MaxActivationDistance = 9999
+                obj.RequiresLineOfSight   = false
+            end)
+            table.insert(foundPrompts, obj)
+        end
+    end
+    return foundPrompts
+end
+
+-- Fire semua prompt baby
+local function fireAllPrompts(source)
+    if #foundPrompts == 0 then
+        log("⚠ Tidak ada prompt — scan dulu", C.red)
+        return
+    end
+    local fired = 0
+    for _, p in ipairs(foundPrompts) do
+        if p and p.Parent then
+            local ok, err = pcall(function() fireproximityprompt(p) end)
+            if ok then
+                fired += 1
+                log("✅ ["..source.."] fired: "..p.Parent.Name, C.green)
+            else
+                log("❌ ["..source.."] fail: "..tostring(err), C.red)
+            end
+        end
+    end
+    setStatus("Last fire: "..fired.." prompt ("..source..")", C.green)
+end
+
+-- =============================================
+-- Scan button
+-- =============================================
+btnScan.MouseButton1Click:Connect(function()
+    div()
+    log("🔍 Scanning 'Baby' prompt...", C.orange)
+    getPrompts()
+    log("Total ditemukan: "..#foundPrompts, #foundPrompts > 0 and C.green or C.red)
+    for _, p in ipairs(foundPrompts) do
+        log("  📌 "..p:GetFullName(), C.orange)
+        log("     Action:\""..p.ActionText.."\"  Object:\""..p.ObjectText.."\"", C.grey)
+        log("     MaxDist:"..tostring(p.MaxActivationDistance).."  Enabled:"..tostring(p.Enabled), C.grey)
+    end
+    setStatus("Prompt ditemukan: "..#foundPrompts, C.orange)
+end)
+
+-- =============================================
+-- Test fire manual
+-- =============================================
+btnTest.MouseButton1Click:Connect(function()
+    div()
+    log("⚡ Manual test fire...", C.blue)
+    if #foundPrompts == 0 then
+        getPrompts()
+        log("Auto scan: "..#foundPrompts.." found", C.grey)
+    end
+    fireAllPrompts("manual")
+end)
+
+-- =============================================
+-- Auto toggle
+-- =============================================
+local AUTO_ON = false
+btnAuto.MouseButton1Click:Connect(function()
+    AUTO_ON = not AUTO_ON
+    btnAuto.Text             = AUTO_ON and "🤖 Auto: ON" or "🤖 Auto: OFF"
+    btnAuto.BackgroundColor3 = AUTO_ON
+        and Color3.fromRGB(160, 90, 10)
+        or  Color3.fromRGB(50, 50, 65)
+    log("🤖 Auto " .. (AUTO_ON and "ON" or "OFF"), C.orange)
+end)
+
+-- Auto loop
+task.spawn(function()
+    while true do
+        task.wait(1)
+        if not AUTO_ON then continue end
+        if #foundPrompts == 0 then
+            getPrompts()
+            if #foundPrompts > 0 then
+                log("🔍 Auto scan: "..#foundPrompts.." prompt found", C.orange)
+            end
+        end
+        if #foundPrompts > 0 then
+            fireAllPrompts("auto")
+        end
+    end
+end)
+
+-- =============================================
+-- Listen BabyAction — inti utama
+-- Ketika event masuk arg "dropBaby" → langsung fire prompt
+-- =============================================
+local function listenBabyAction()
+    if not babyAction then
+        log("⚠ BabyAction tidak ditemukan!", C.red)
+        return
+    end
+    log("✅ Listening BabyAction", C.green)
+    pcall(function()
+        babyAction.OnClientEvent:Connect(function(...)
+            local args = {...}
+            div()
+            log("📥 BabyAction RECEIVED", C.yellow)
+            for i, v in ipairs(args) do
+                log("   arg["..i.."] "..typeof(v).." = "..tostring(v), C.yellow)
+            end
+
+            -- Kalau arg[1] == "dropBaby" → fire prompt
+            if args[1] == "dropBaby" then
+                log("🎯 Trigger 'dropBaby' detected → fire prompt!", C.green, true)
+                setStatus("🎯 dropBaby detected! Firing...", C.green)
+
+                -- Scan ulang dulu biar prompt fresh
+                getPrompts()
+
+                if #foundPrompts > 0 then
+                    fireAllPrompts("BabyAction trigger")
+                else
+                    log("⚠ Tidak ada prompt Baby ditemukan saat trigger", C.red)
+                end
+            end
+        end)
+    end)
+end
+
+-- Listen DropBaby — log aja
+local function listenDropBaby()
+    if not dropBaby then
+        log("⚠ DropBaby tidak ditemukan!", C.red)
+        return
+    end
+    log("✅ Listening DropBaby", C.green)
+    pcall(function()
+        dropBaby.OnClientEvent:Connect(function(...)
+            local args = {...}
+            div()
+            log("📥 DropBaby RECEIVED", C.blue)
+            for i, v in ipairs(args) do
+                log("   arg["..i.."] "..typeof(v).." = "..tostring(v), C.blue)
+            end
+        end)
+    end)
+end
+
+-- =============================================
 -- Init
 -- =============================================
-log("🟢 Baby Debug ready", C.green)
+log("🟢 Baby Auto v2 ready", C.green)
 div()
-listenAll()
+listenBabyAction()
+listenDropBaby()
 div()
-log("1. Fire dulu tanpa arg → lihat log", C.grey)
-log("2. Scan prompt → auto langsung dicoba", C.grey)
-log("3. Nyalakan Auto jika mau loop", C.grey)
+log("ℹ Cara pakai:", C.grey)
+log("  • Scan prompt dulu biar ready", C.grey)
+log("  • Listener aktif otomatis — saat BabyAction 'dropBaby' masuk, prompt langsung di-fire", C.grey)
+log("  • Nyalakan Auto jika mau loop terus", C.grey)
+div()
