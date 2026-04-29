@@ -7,7 +7,7 @@ local LocalPlayer = Players.LocalPlayer
 local character   = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
 
 local function resolveHRP(char)
-    return char:FindFirstChild("HumanoidRootPart")
+    return char:FindFirstChild("HumanoidRootPart") 
         or char:FindFirstChild("UpperTorso")
         or char:FindFirstChild("Torso")
 end
