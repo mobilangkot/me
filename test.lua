@@ -1,13 +1,12 @@
 local Players           = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local UserInputService  = game:GetService("UserInputService")
-local RunService        = game:GetService("RunService")
 
 local LocalPlayer = Players.LocalPlayer
 local character   = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
 
 local function resolveHRP(char)
-    return char:FindFirstChild("HumanoidRootPart") 
+    return char:FindFirstChild("HumanoidRootPart")
         or char:FindFirstChild("UpperTorso")
         or char:FindFirstChild("Torso")
 end
@@ -19,14 +18,42 @@ LocalPlayer.CharacterAdded:Connect(function(char)
 end)
 
 -- Remote targets
-local remotesFolder = ReplicatedStorage:FindFirstChild("Remotes")
-local reBabyAction  = remotesFolder and remotesFolder:FindFirstChild("BabyAction")
-local reDropBaby    = remotesFolder and remotesFolder:FindFirstChild("DropBaby")
+local reBabyAction, reDropBaby
+pcall(function()
+    local remotesFolder = ReplicatedStorage:WaitForChild("Remotes", 5)
+    if remotesFolder then
+        reBabyAction = remotesFolder:WaitForChild("BabyAction", 5)
+        reDropBaby   = remotesFolder:WaitForChild("DropBaby", 5)
+    end
+end)
 
-local SCAN_RADIUS   = 20000
-local AUTO_ON       = false
-local logLines      = {}
-local lineOrder     = 0
+local SCAN_RADIUS = 20000
+local AUTO_ON     = false
+local logLines    = {}
+local lineOrder   = 0
+local foundPrompts = {}
+
+-- Cek fireproximityprompt tersedia
+local function doFirePrompt(prompt)
+    local ok, err = pcall(function()
+        if fireproximityprompt then
+            fireproximityprompt(prompt)
+        else
+            -- fallback: trigger via holdDuration = 0
+            prompt.HoldDuration = 0
+        end
+    end)
+    return ok, err
+end
+
+-- Timestamp pakai tick
+local function ts()
+    local t = math.floor(tick())
+    local h = math.floor(t / 3600) % 24
+    local m = math.floor(t / 60) % 60
+    local s = t % 60
+    return string.format("[%02d:%02d:%02d]  ", h, m, s)
+end
 
 -- =============================================
 -- GUI
@@ -80,7 +107,7 @@ subLbl.TextXAlignment  = Enum.TextXAlignment.Left
 subLbl.Text            = "by menzcreate  •  discord: menzcreate"
 subLbl.ZIndex          = 5
 
--- Status remote bar
+-- Remote status bar
 local remoteBar = Instance.new("Frame", frame)
 remoteBar.Size             = UDim2.new(1, -16, 0, 26)
 remoteBar.Position         = UDim2.new(0, 8, 0, 50)
@@ -101,7 +128,7 @@ remoteLbl.TextSize           = 12
 remoteLbl.TextXAlignment     = Enum.TextXAlignment.Left
 remoteLbl.Text               = reBabyAction
     and "✅  BabyAction & DropBaby ditemukan"
-    or  "⚠  Remote tidak ditemukan — cek path"
+    or  "⚠  Remote tidak ditemukan — cek nama folder"
 remoteLbl.ZIndex             = 4
 
 -- Buttons
@@ -121,15 +148,15 @@ local function newBtn(text, posY, col)
     return b
 end
 
-local C_BLUE   = Color3.fromRGB(30, 80, 200)
-local C_GREEN  = Color3.fromRGB(20, 110, 40)
-local C_GREY   = Color3.fromRGB(38, 38, 50)
-local C_ORANGE = Color3.fromRGB(180, 100, 10)
-local C_RED    = Color3.fromRGB(160, 30, 30)
+local C_BLUE   = Color3.fromRGB(30,  80, 200)
+local C_GREEN  = Color3.fromRGB(20, 110,  40)
+local C_GREY   = Color3.fromRGB(38,  38,  50)
+local C_ORANGE = Color3.fromRGB(180, 100,  10)
+local C_RED    = Color3.fromRGB(160,  30,  30)
 
 local fireActionBtn = newBtn("🔵  Fire BabyAction (no args)",  84,  C_BLUE)
 local fireDropBtn   = newBtn("🔵  Fire DropBaby (no args)",    124, C_BLUE)
-local scanPromptBtn = newBtn("🔍  Scan Prompt 'Baby'",         164, C_GREY)
+local scanPromptBtn = newBtn("🔍  Scan Prompt Baby",           164, C_GREY)
 local autoBtn       = newBtn("🤖  Auto Click Prompt  :  OFF",  204, C_GREY)
 local clearBtn      = newBtn("🗑  Clear Log",                   244, C_RED)
 
@@ -155,14 +182,14 @@ promptLbl.ZIndex             = 4
 
 -- Scroll log
 local scroll = Instance.new("ScrollingFrame", frame)
-scroll.Size                = UDim2.new(1, -16, 1, -324)
-scroll.Position            = UDim2.new(0, 8, 0, 316)
+scroll.Size                = UDim2.new(1, -16, 1, -322)
+scroll.Position            = UDim2.new(0, 8, 0, 314)
 scroll.BackgroundColor3    = Color3.fromRGB(14, 14, 20)
 scroll.BorderSizePixel     = 0
 scroll.ScrollBarThickness  = 5
 scroll.ScrollBarImageColor3 = Color3.fromRGB(255, 160, 30)
 scroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
-scroll.CanvasSize          = UDim2.new(0,0,0,0)
+scroll.CanvasSize          = UDim2.new(0, 0, 0, 0)
 scroll.ZIndex              = 3
 Instance.new("UICorner", scroll).CornerRadius = UDim.new(0, 7)
 
@@ -171,9 +198,9 @@ layout.SortOrder = Enum.SortOrder.LayoutOrder
 layout.Padding   = UDim.new(0, 1)
 
 local padInner = Instance.new("UIPadding", scroll)
-padInner.PaddingLeft   = UDim.new(0, 6)
-padInner.PaddingRight  = UDim.new(0, 6)
-padInner.PaddingTop    = UDim.new(0, 4)
+padInner.PaddingLeft  = UDim.new(0, 6)
+padInner.PaddingRight = UDim.new(0, 6)
+padInner.PaddingTop   = UDim.new(0, 4)
 
 local hintLbl = Instance.new("TextLabel", frame)
 hintLbl.Size               = UDim2.new(1,-16,0,14)
@@ -193,7 +220,7 @@ UserInputService.InputBegan:Connect(function(input, gp)
 end)
 
 -- =============================================
--- Log
+-- Log system
 -- =============================================
 local C = {
     info    = Color3.fromRGB(160, 160, 180),
@@ -219,7 +246,9 @@ local function addLog(text, color, bold)
     lbl.Text               = text
     lbl.LayoutOrder        = lineOrder
     lbl.ZIndex             = 4
-    task.defer(function() scroll.CanvasPosition = Vector2.new(0, math.huge) end)
+    task.defer(function()
+        scroll.CanvasPosition = Vector2.new(0, math.huge)
+    end)
     table.insert(logLines, lbl)
     if #logLines > 300 then
         table.remove(logLines, 1):Destroy()
@@ -230,19 +259,17 @@ local function addDiv()
     addLog("────────────────────────────────────────────────", C.div)
 end
 
-local function ts()
-    return "[" .. os.date("%H:%M:%S") .. "]  "
-end
-
 clearBtn.MouseButton1Click:Connect(function()
-    for _, l in ipairs(logLines) do pcall(function() l:Destroy() end) end
+    for _, l in ipairs(logLines) do
+        pcall(function() l:Destroy() end)
+    end
     logLines  = {}
     lineOrder = 0
     addLog("🗑  Log dibersihkan.", C.info)
 end)
 
 -- =============================================
--- Listen RemoteEvent (OnClientEvent)
+-- Listen remote
 -- =============================================
 local function listenRemote(re, name)
     if not re then
@@ -250,57 +277,61 @@ local function listenRemote(re, name)
         return
     end
     addLog("✅  Listening: " .. name, C.prompt, true)
-    re.OnClientEvent:Connect(function(...)
-        local args = {...}
-        addDiv()
-        addLog(ts() .. "📥  RECEIVED  →  " .. name, C.receive, true)
-        if #args == 0 then
-            addLog("   (tidak ada argument)", C.info)
-        else
-            for i, v in ipairs(args) do
-                local vtype = typeof(v)
-                local vstr
-                if vtype == "Instance" then
-                    vstr = v:GetFullName() .. "  [" .. v.ClassName .. "]"
-                    -- Print semua attribute instance yang diterima
-                    local ok, attrs = pcall(function() return v:GetAttributes() end)
-                    if ok then
-                        for k, av in pairs(attrs) do
-                            addLog("     attr  " .. k .. "  =  " .. tostring(av), C.auto)
+
+    pcall(function()
+        re.OnClientEvent:Connect(function(...)
+            local args = {...}
+            addDiv()
+            addLog(ts() .. "📥 RECEIVED → " .. name, C.receive, true)
+            if #args == 0 then
+                addLog("   (tidak ada argument)", C.info)
+            else
+                for i, v in ipairs(args) do
+                    local vtype = typeof(v)
+                    local vstr  = ""
+
+                    if vtype == "Instance" then
+                        vstr = v:GetFullName() .. "  [" .. v.ClassName .. "]"
+                        -- Attributes
+                        local okA, attrs = pcall(function() return v:GetAttributes() end)
+                        if okA then
+                            for k, av in pairs(attrs) do
+                                addLog("     ◆ attr  " .. k .. " = " .. tostring(av), C.auto)
+                            end
                         end
-                    end
-                    -- Print children value
-                    for _, child in ipairs(v:GetChildren()) do
-                        if child:IsA("StringValue") or child:IsA("IntValue")
-                        or child:IsA("NumberValue") or child:IsA("BoolValue") then
-                            addLog("     child  [" .. child.ClassName .. "]  " .. child.Name .. "  =  " .. tostring(child.Value), C.prompt)
+                        -- Value children
+                        local okC, children = pcall(function() return v:GetChildren() end)
+                        if okC then
+                            for _, child in ipairs(children) do
+                                if child:IsA("StringValue") or child:IsA("IntValue")
+                                or child:IsA("NumberValue") or child:IsA("BoolValue") then
+                                    addLog("     ● " .. child.ClassName .. " \"" .. child.Name .. "\" = " .. tostring(child.Value), C.prompt)
+                                end
+                            end
                         end
+                    else
+                        vstr = tostring(v)
                     end
-                else
-                    vstr = tostring(v)
+
+                    addLog("   arg[" .. i .. "] <" .. vtype .. "> = " .. vstr, C.receive)
                 end
-                addLog("   arg[" .. i .. "]  <" .. vtype .. ">  =  " .. vstr, C.receive)
             end
-        end
+        end)
     end)
 end
 
 -- =============================================
--- Fire remote manual
+-- Fire remote
 -- =============================================
-local function tryFire(re, name, ...)
+local function tryFire(re, name)
     if not re then
         addLog("⚠  " .. name .. " tidak ditemukan", C.error)
         return
     end
     addDiv()
-    addLog(ts() .. "🔵  FIRE  →  " .. name, C.fire, true)
-    local args = {...}
-    if #args == 0 then
-        addLog("   (no args)", C.info)
-    end
+    addLog(ts() .. "🔵 FIRE → " .. name, C.fire, true)
     local ok, err = pcall(function()
-        re:FireServer(...)
+        re:FireServer()
     end)
     if ok then
         addLog("   ✅ berhasil dikirim", C.prompt)
@@ -312,29 +343,31 @@ end
 fireActionBtn.MouseButton1Click:Connect(function()
     tryFire(reBabyAction, "BabyAction")
 end)
-
 fireDropBtn.MouseButton1Click:Connect(function()
     tryFire(reDropBaby, "DropBaby")
 end)
 
 -- =============================================
--- Scan & Auto ProximityPrompt "baby"
+-- Scan prompt baby
 -- =============================================
-local foundPrompts = {}
-
 local function isBabyPrompt(obj)
     if not obj:IsA("ProximityPrompt") then return false end
-    local at = string.lower(obj.ActionText)
-    local ot = string.lower(obj.ObjectText)
+    local at = string.lower(obj.ActionText or "")
+    local ot = string.lower(obj.ObjectText or "")
     return string.find(at, "baby") ~= nil
         or string.find(ot, "baby") ~= nil
 end
 
 local function scanBabyPrompts()
     foundPrompts = {}
-    for _, obj in ipairs(workspace:GetDescendants()) do
+    local ok, list = pcall(function() return workspace:GetDescendants() end)
+    if not ok then
+        addLog("❌ Gagal scan workspace", C.error)
+        return
+    end
+
+    for _, obj in ipairs(list) do
         if isBabyPrompt(obj) then
-            -- Perpanjang MaxActivationDistance
             pcall(function()
                 obj.MaxActivationDistance = SCAN_RADIUS
             end)
@@ -343,28 +376,33 @@ local function scanBabyPrompts()
     end
 
     addDiv()
-    addLog(ts() .. "🔍  Scan prompt 'baby' selesai", C.prompt, true)
-    addLog("   Total ditemukan: " .. #foundPrompts, C.prompt)
+    addLog(ts() .. "🔍 Scan selesai", C.prompt, true)
+    addLog("   Total prompt baby: " .. #foundPrompts, C.prompt)
 
     for _, p in ipairs(foundPrompts) do
-        addLog("   📌  " .. p:GetFullName(), C.info)
-        addLog("      ActionText: " .. p.ActionText, C.auto)
-        addLog("      ObjectText: " .. p.ObjectText, C.auto)
+        addLog("   📌 " .. p:GetFullName(), C.info)
+        addLog("      ActionText: \"" .. tostring(p.ActionText) .. "\"", C.auto)
+        addLog("      ObjectText: \"" .. tostring(p.ObjectText) .. "\"", C.auto)
         addLog("      MaxActivationDistance: " .. tostring(p.MaxActivationDistance), C.auto)
         addLog("      Enabled: " .. tostring(p.Enabled), C.auto)
     end
 
     promptLbl.Text = "🍼  Prompt baby: " .. #foundPrompts .. " ditemukan"
+    promptLbl.TextColor3 = #foundPrompts > 0
+        and Color3.fromRGB(80, 220, 130)
+        or  Color3.fromRGB(255, 80, 80)
 end
 
 scanPromptBtn.MouseButton1Click:Connect(scanBabyPrompts)
 
--- Auto click
+-- =============================================
+-- Auto click toggle
+-- =============================================
 autoBtn.MouseButton1Click:Connect(function()
     AUTO_ON = not AUTO_ON
     autoBtn.Text             = AUTO_ON and "🤖  Auto Click Prompt  :  ON" or "🤖  Auto Click Prompt  :  OFF"
     autoBtn.BackgroundColor3 = AUTO_ON and C_ORANGE or C_GREY
-    addLog(ts() .. "🤖  Auto Collect " .. (AUTO_ON and "ON" or "OFF"), C.auto, true)
+    addLog(ts() .. "🤖 Auto " .. (AUTO_ON and "ON" or "OFF"), C.auto, true)
 end)
 
 -- =============================================
@@ -372,28 +410,34 @@ end)
 -- =============================================
 task.spawn(function()
     while true do
-        task.wait(0.5)
+        task.wait(0.6)
         if not AUTO_ON then continue end
         if not hrp or not hrp.Parent then continue end
+        if #foundPrompts == 0 then continue end
 
         for _, prompt in ipairs(foundPrompts) do
             if not prompt or not prompt.Parent then continue end
-            local part = prompt:FindFirstAncestorWhichIsA("BasePart")
-                or prompt:FindFirstAncestorWhichIsA("Model")
-            if part then
-                local pos = part:IsA("BasePart") and part.Position
-                    or (part.PrimaryPart and part.PrimaryPart.Position)
-                if pos then
-                    local d = (pos - hrp.Position).Magnitude
-                    if d <= SCAN_RADIUS then
-                        local ok, err = pcall(function()
-                            fireproximityprompt(prompt)
-                        end)
-                        if ok then
-                            addLog(ts() .. "🤖  Auto fire prompt: " .. prompt:GetFullName(), C.auto)
-                        else
-                            addLog(ts() .. "❌  gagal fire: " .. tostring(err), C.error)
-                        end
+
+            local ok2, pos = pcall(function()
+                local part = prompt:FindFirstAncestorWhichIsA("BasePart")
+                if part then return part.Position end
+                local mdl = prompt:FindFirstAncestorWhichIsA("Model")
+                if mdl then
+                    if mdl.PrimaryPart then return mdl.PrimaryPart.Position end
+                    local bp = mdl:FindFirstChildWhichIsA("BasePart", true)
+                    if bp then return bp.Position end
+                end
+                return nil
+            end)
+
+            if ok2 and pos then
+                local d = (pos - hrp.Position).Magnitude
+                if d <= SCAN_RADIUS then
+                    local ok3, err = doFirePrompt(prompt)
+                    if ok3 then
+                        addLog(ts() .. "🤖 fired: " .. prompt.Parent.Name, C.auto)
+                    else
+                        addLog(ts() .. "❌ gagal: " .. tostring(err), C.error)
                     end
                 end
             end
@@ -406,12 +450,13 @@ end)
 -- =============================================
 addLog("🟢  Baby Debug aktif", C.prompt, true)
 addDiv()
-addLog("📡  Listening RemoteEvent...", C.info, true)
+addLog("📡  Setup remote listener...", C.info, true)
 listenRemote(reBabyAction, "BabyAction")
 listenRemote(reDropBaby,   "DropBaby")
 addDiv()
-addLog("💡  Tips:", C.info, true)
-addLog("  1. Klik 'Scan Prompt Baby' dulu", C.info)
-addLog("  2. Klik 'Fire BabyAction' / 'Fire DropBaby' tanpa arg", C.info)
-addLog("  3. Lihat log — argument apa yang diterima dari server", C.info)
-addLog("  4. Enable Auto jika prompt sudah ketemu", C.info)
+addLog("💡  Urutan debug:", C.info, true)
+addLog("   1. Klik Scan Prompt Baby", C.info)
+addLog("   2. Klik Fire BabyAction & Fire DropBaby", C.info)
+addLog("   3. Lihat argument yang masuk di log", C.info)
+addLog("   4. Nyalakan Auto jika prompt sudah ketemu", C.info)
+addDiv()
