@@ -1,6 +1,7 @@
 local Players          = game:GetService("Players")
 local UserInputService = game:GetService("UserInputService")
 local RunService       = game:GetService("RunService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local LocalPlayer = Players.LocalPlayer
 local character   = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
@@ -18,18 +19,21 @@ local hrp      = resolveHRP(character)
 local humanoid = resolveHumanoid(character)
 
 local SCAN_RADIUS  = 15000
-local AUTO_RADIUS  = 4
 local TOGGLE_KEY   = Enum.KeyCode.RightControl
 local SPEED_ON     = false
 local NOCLIP_ON    = false
 local HIGHLIGHT_ON = true
 local AUTO_ON      = false
+local BABY_ON      = false
 local STOPPED      = false
 local MINIMIZED    = false
 
 local foundModels = {}
 local highlights  = {}
 
+-- =============================================
+-- Path collect
+-- =============================================
 local function getInstancesFolder()
     local ok, res = pcall(function()
         return workspace
@@ -41,7 +45,9 @@ local function getInstancesFolder()
     return ok and res or nil
 end
 
+-- =============================================
 -- Speed
+-- =============================================
 local speedConn
 local function startSpeedLoop()
     if speedConn then speedConn:Disconnect() end
@@ -73,7 +79,9 @@ local function applySpeed(char)
 end
 startSpeedLoop()
 
+-- =============================================
 -- Noclip
+-- =============================================
 local noclipConn
 local function startNoclip()
     if noclipConn then noclipConn:Disconnect() end
@@ -99,7 +107,9 @@ local function stopNoclip()
 end
 startNoclip()
 
+-- =============================================
 -- Highlight
+-- =============================================
 local function clearHighlights()
     for _, h in ipairs(highlights) do
         pcall(function() h:Destroy() end)
@@ -122,24 +132,9 @@ local function addHighlight(target, isNearest)
     table.insert(highlights, h)
 end
 
--- Auto collect
-local function firePrompt(prompt)
-    -- Coba fireproximityprompt via executor
-    pcall(function()
-        local fn = getfenv and getfenv(0) or {}
-        if fn.firetouchinterest then return end
-    end)
-    -- Cara utama: FireProximityPrompt
-    pcall(function()
-        local VPS = game:GetService("VirtualInputManager")
-        if VPS then end
-    end)
-    -- Method paling universal di executor
-    pcall(function()
-        fireproximityprompt(prompt)
-    end)
-end
-
+-- =============================================
+-- Collect prompt
+-- =============================================
 local function getPromptFromModel(model)
     for _, desc in ipairs(model:GetDescendants()) do
         if desc:IsA("ProximityPrompt") then
@@ -151,6 +146,45 @@ local function getPromptFromModel(model)
         end
     end
     return nil
+end
+
+local function firePrompt(prompt)
+    pcall(function() fireproximityprompt(prompt) end)
+end
+
+-- =============================================
+-- Auto Baby
+-- =============================================
+local function fireAllBabyPrompts()
+    if STOPPED then return end
+    for _, obj in ipairs(workspace:GetDescendants()) do
+        if obj:IsA("ProximityPrompt") then
+            if obj.ActionText == "Baby" or obj.ObjectText == "Baby" then
+                pcall(function()
+                    obj.MaxActivationDistance = 9999
+                    obj.RequiresLineOfSight   = false
+                end)
+                pcall(function() fireproximityprompt(obj) end)
+            end
+        end
+    end
+end
+
+-- Listen BabyAction
+local remotes    = ReplicatedStorage:FindFirstChild("Remotes")
+local babyAction = remotes and remotes:FindFirstChild("BabyAction")
+local dropBaby   = remotes and remotes:FindFirstChild("DropBaby")
+
+if babyAction then
+    pcall(function()
+        babyAction.OnClientEvent:Connect(function(...)
+            local args = {...}
+            if args[1] == "dropBaby" and BABY_ON and not STOPPED then
+                task.wait(0.15)
+                fireAllBabyPrompts()
+            end
+        end)
+    end)
 end
 
 -- =============================================
@@ -175,7 +209,7 @@ Instance.new("UICorner", floatBtn).CornerRadius = UDim.new(0, 12)
 
 -- Main frame
 local frame = Instance.new("Frame", gui)
-frame.Size             = UDim2.new(0, 290, 0, 385)
+frame.Size             = UDim2.new(0, 290, 0, 430)
 frame.Position         = UDim2.new(0, 14, 0, 14)
 frame.BackgroundColor3 = Color3.fromRGB(15, 15, 18)
 frame.BorderSizePixel  = 0
@@ -272,20 +306,35 @@ local C_GREY  = Color3.fromRGB(38, 38, 48)
 local C_BLUE  = Color3.fromRGB(20, 70, 150)
 local C_RED   = Color3.fromRGB(170, 28, 28)
 local C_PURP  = Color3.fromRGB(100, 30, 160)
+local C_PINK  = Color3.fromRGB(180, 30, 120)
 
 local hlBtn   = newBtn(86,  C_GREEN)
 local tpBtn   = newBtn(128, C_BLUE)
 local spBtn   = newBtn(170, C_GREY)
 local ncBtn   = newBtn(212, C_GREY)
 local autoBtn = newBtn(254, C_GREY)
-local stopBtn = newBtn(300, C_RED)
+local babyBtn = newBtn(296, C_GREY)
+local stopBtn = newBtn(342, C_RED)
 
 hlBtn.Text   = "💡  Highlight  :  ON"
 tpBtn.Text   = "📦  Teleport ke Terdekat"
 spBtn.Text   = "⚡  Speed + Jump  :  OFF"
 ncBtn.Text   = "👻  Noclip  :  OFF"
 autoBtn.Text = "🤖  Auto Collect  :  OFF"
+babyBtn.Text = "🍼  Auto Baby  :  OFF"
 stopBtn.Text = "⏹  Stop All"
+
+-- Baby status kecil
+local babyStatus = Instance.new("TextLabel", frame)
+babyStatus.Position           = UDim2.new(0, 8, 0, 332)
+babyStatus.Size               = UDim2.new(1, -16, 0, 10)
+babyStatus.BackgroundTransparency = 1
+babyStatus.TextColor3         = Color3.fromRGB(180, 80, 140)
+babyStatus.Font               = Enum.Font.Gotham
+babyStatus.TextSize           = 10
+babyStatus.TextXAlignment     = Enum.TextXAlignment.Left
+babyStatus.Text               = babyAction and "  ✅ BabyAction found" or "  ⚠ BabyAction not found"
+babyStatus.ZIndex             = 3
 
 local hintLbl = Instance.new("TextLabel", frame)
 hintLbl.Size               = UDim2.new(1, -16, 0, 14)
@@ -324,6 +373,7 @@ local function doStopAll()
     NOCLIP_ON    = false
     HIGHLIGHT_ON = false
     AUTO_ON      = false
+    BABY_ON      = false
 
     applySpeed(LocalPlayer.Character)
     stopNoclip()
@@ -333,10 +383,12 @@ local function doStopAll()
     ncBtn.Text             = "👻  Noclip  :  OFF"
     hlBtn.Text             = "💡  Highlight  :  OFF"
     autoBtn.Text           = "🤖  Auto Collect  :  OFF"
-    spBtn.BackgroundColor3 = C_GREY
-    ncBtn.BackgroundColor3 = C_GREY
-    hlBtn.BackgroundColor3 = C_GREY
+    babyBtn.Text           = "🍼  Auto Baby  :  OFF"
+    spBtn.BackgroundColor3   = C_GREY
+    ncBtn.BackgroundColor3   = C_GREY
+    hlBtn.BackgroundColor3   = C_GREY
     autoBtn.BackgroundColor3 = C_GREY
+    babyBtn.BackgroundColor3 = C_GREY
 
     stopBtn.Text             = "▶  Resume All"
     stopBtn.BackgroundColor3 = Color3.fromRGB(20, 100, 160)
@@ -422,6 +474,13 @@ autoBtn.MouseButton1Click:Connect(function()
     autoBtn.BackgroundColor3 = AUTO_ON and C_PURP or C_GREY
 end)
 
+babyBtn.MouseButton1Click:Connect(function()
+    if STOPPED then return end
+    BABY_ON = not BABY_ON
+    babyBtn.Text             = BABY_ON and "🍼  Auto Baby  :  ON" or "🍼  Auto Baby  :  OFF"
+    babyBtn.BackgroundColor3 = BABY_ON and C_PINK or C_GREY
+end)
+
 -- =============================================
 -- Respawn
 -- =============================================
@@ -434,12 +493,11 @@ LocalPlayer.CharacterAdded:Connect(function(char)
 end)
 
 -- =============================================
--- Scan Loop
+-- Scan Loop (collect)
 -- =============================================
 task.spawn(function()
     while true do
         task.wait(0.7)
-
         if STOPPED then continue end
 
         if not hrp or not hrp.Parent then
@@ -471,9 +529,7 @@ task.spawn(function()
                         if d < bestDist then
                             nearest, bestDist = model, d
                         end
-
-                        -- Auto collect: kalau dalam radius 4 stud
-                        if AUTO_ON and d <= AUTO_RADIUS then
+                        if AUTO_ON then
                             firePrompt(prompt)
                         end
                     end
@@ -481,7 +537,6 @@ task.spawn(function()
             end
         end
 
-        -- Highlight
         if HIGHLIGHT_ON then
             for _, model in ipairs(foundModels) do
                 addHighlight(model, model == nearest)
@@ -489,10 +544,12 @@ task.spawn(function()
         end
 
         if nearest then
-            local autoStatus = AUTO_ON and "  |  🤖 auto ON" or ""
+            local tags = ""
+            if AUTO_ON  then tags = tags .. "  🤖" end
+            if BABY_ON  then tags = tags .. "  🍼" end
             infoLbl.Text = string.format(
-                "📦  %d collect  |  Terdekat: %.0f studs%s",
-                #foundModels, bestDist, autoStatus
+                "📦  %d collect  |  %.0f studs%s",
+                #foundModels, bestDist, tags
             )
         else
             infoLbl.Text = "📦  Tidak ada collect terdeteksi"
