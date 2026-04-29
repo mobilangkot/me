@@ -219,7 +219,7 @@ btn_scan.MouseButton1Click:Connect(function()
         if obj:IsA("ProximityPrompt") then
             local at = string.lower(obj.ActionText or "")
             local ot = string.lower(obj.ObjectText or "")
-            if string.find(at,"baby") or string.find(ot,"baby") then
+                if string.find(at,"Baby") or string.find(ot,"Baby") then
                 table.insert(foundPrompts, obj)
                 pcall(function() obj.MaxActivationDistance = 9999 end)
                 log("📌 "..obj:GetFullName(), C.orange)
