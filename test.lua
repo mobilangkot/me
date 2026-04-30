@@ -1,390 +1,464 @@
--- ================================================================
---  WAYPOINT RECORDER v2 — untuk SQ Tool AI v8
---  Output langsung kompatibel: WP_ISLAND_TO_LIFT / WP_LOBBY / WP_ISLAND_BACK
---  By menzcreate | discord: menzcreate
--- ================================================================
---
---  ALUR RECORD:
---
---  SECTION 1 — "Island → Lift Lobby"
---    Mulai dari spawn island, jalan ke arah lift lobby,
---    rekam titik-titik sepanjang jalan, STOP tepat di depan pintu lift.
---    → Tekan [Ganti Section] setelah selesai.
---
---  SECTION 2 — "Lobby Farming Route"
---    Keluar dari lift lobby, jalan mengelilingi area evidence,
---    rekam semua titik farming, akhiri tepat di depan pintu lift Facility.
---    → Tekan [Ganti Section] setelah selesai.
---
---  SECTION 3 — "Island (Balik) → Deposit"
---    Keluar dari lift Facility di island, jalan ke titik deposit,
---    rekam jalurnya, STOP tepat di titik deposit.
---    → Tekan [Generate & Copy] setelah selesai.
---
---  TIPS:
---  - Jalan PELAN, rekam tiap 5-10 studs
---  - Di tikungan / tanjakan rekam lebih rapat
---  - Gunakan [↩ Undo] kalau salah rekam
---  - Setelah copy, paste GANTIKAN 3 array di script AI v8
---
--- ================================================================
+local Players           = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local UserInputService  = game:GetService("UserInputService")
 
-local Players = game:GetService("Players")
 local LP = Players.LocalPlayer
 
--- =============================================
---  STATE
--- =============================================
-local sectionList = {
-    { key = "SEG1", varName = "WP_ISLAND_TO_LIFT", label = "Island → Lift Lobby",       color = Color3.fromRGB(255,160,60)  },
-    { key = "SEG2", varName = "WP_LOBBY",           label = "Lobby Farming Route",       color = Color3.fromRGB(60,190,255)  },
-    { key = "SEG3", varName = "WP_ISLAND_BACK",     label = "Island (Balik) → Deposit",  color = Color3.fromRGB(180,100,255) },
-}
+local keywords = {"detective", "evidence", "deposit", "lobby", "facility", "collect", "badge", "reward", "case"}
 
-local sectionData = {}   -- sectionData[i] = { pos=Vector3, ... }[]
-for i = 1, #sectionList do sectionData[i] = {} end
-
-local activeSec    = 1   -- 1 / 2 / 3
-local totalPoints  = 0
-
-local function getHRP()
-    local c = LP.Character; if not c then return nil end
-    return c:FindFirstChild("HumanoidRootPart")
-        or c:FindFirstChild("UpperTorso")
-        or c:FindFirstChild("Torso")
+local function matchKeyword(str)
+    if not str then return false end
+    local s = string.lower(str)
+    for _, kw in ipairs(keywords) do
+        if string.find(s, kw) then return true end
+    end
+    return false
 end
 
 -- =============================================
---  GUI
+-- GUI
 -- =============================================
 local gui = Instance.new("ScreenGui", LP:WaitForChild("PlayerGui"))
-gui.Name = "WPRecorder"; gui.ResetOnSpawn = false
-
-local BG   = Color3.fromRGB(13,13,17)
-local BG1  = Color3.fromRGB(18,18,24)
-local BG2  = Color3.fromRGB(22,22,30)
-local DIM  = Color3.fromRGB(60,60,75)
-local WHT  = Color3.fromRGB(220,220,220)
+gui.Name = "DebugScanner"; gui.ResetOnSpawn = false
 
 local frame = Instance.new("Frame", gui)
-frame.Size             = UDim2.new(0,300,0,450)
-frame.Position         = UDim2.new(0,10,0,10)
-frame.BackgroundColor3 = BG
+frame.Size             = UDim2.new(0, 500, 0, 580)
+frame.Position         = UDim2.new(0, 10, 0, 10)
+frame.BackgroundColor3 = Color3.fromRGB(10, 10, 14)
 frame.BorderSizePixel  = 0
 frame.Active           = true
 frame.Draggable        = true
-Instance.new("UICorner", frame).CornerRadius = UDim.new(0,12)
+Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 10)
 
--- accent bar atas
-local accentBar = Instance.new("Frame", frame)
-accentBar.Size             = UDim2.new(1,0,0,3)
-accentBar.BackgroundColor3 = Color3.fromRGB(255,180,30)
-accentBar.BorderSizePixel  = 0; accentBar.ZIndex = 5
-Instance.new("UICorner", accentBar).CornerRadius = UDim.new(0,12)
-
--- title bar
 local titleBar = Instance.new("Frame", frame)
-titleBar.Size             = UDim2.new(1,0,0,38)
-titleBar.Position         = UDim2.new(0,0,0,3)
-titleBar.BackgroundColor3 = BG1
-titleBar.BorderSizePixel  = 0; titleBar.ZIndex = 4
+titleBar.Size             = UDim2.new(1, 0, 0, 36)
+titleBar.BackgroundColor3 = Color3.fromRGB(16, 16, 22)
+titleBar.BorderSizePixel  = 0
+Instance.new("UICorner", titleBar).CornerRadius = UDim.new(0, 10)
 
 local titleLbl = Instance.new("TextLabel", titleBar)
-titleLbl.Size = UDim2.new(1,-12,1,0); titleLbl.Position = UDim2.new(0,12,0,0)
+titleLbl.Size            = UDim2.new(1, -12, 1, 0)
+titleLbl.Position        = UDim2.new(0, 12, 0, 0)
 titleLbl.BackgroundTransparency = 1
-titleLbl.TextColor3 = WHT; titleLbl.Font = Enum.Font.GothamBold
-titleLbl.TextSize = 13; titleLbl.TextXAlignment = Enum.TextXAlignment.Left
-titleLbl.Text = "📍  WP Recorder  ·  SQ Tool v8"; titleLbl.ZIndex = 5
+titleLbl.TextColor3      = Color3.fromRGB(255, 255, 255)
+titleLbl.Font            = Enum.Font.GothamBold
+titleLbl.TextSize        = 13
+titleLbl.TextXAlignment  = Enum.TextXAlignment.Left
+titleLbl.Text            = "🔍  Detective / Evidence Debug Scanner"
 
--- ─── Section tabs ─────────────────────────────────────────────
-local tabRow = Instance.new("Frame", frame)
-tabRow.Size = UDim2.new(1,-16,0,30); tabRow.Position = UDim2.new(0,8,0,48)
-tabRow.BackgroundTransparency = 1; tabRow.ZIndex = 3
+-- Counter
+local countBar = Instance.new("Frame", frame)
+countBar.Size             = UDim2.new(1, -16, 0, 24)
+countBar.Position         = UDim2.new(0, 8, 0, 42)
+countBar.BackgroundColor3 = Color3.fromRGB(16, 16, 22)
+countBar.BorderSizePixel  = 0
+Instance.new("UICorner", countBar).CornerRadius = UDim.new(0, 6)
 
-local tabBtns = {}
-for i, sec in ipairs(sectionList) do
-    local btn = Instance.new("TextButton", tabRow)
-    btn.Size             = UDim2.new(0.31,0,1,0)
-    btn.Position         = UDim2.new((i-1)*0.335,0,0,0)
-    btn.BackgroundColor3 = BG2
-    btn.TextColor3       = DIM
-    btn.Font             = Enum.Font.GothamBold; btn.TextSize = 10
-    btn.Text             = "SEG" .. i
-    btn.AutoButtonColor  = false; btn.BorderSizePixel = 0; btn.ZIndex = 4
-    Instance.new("UICorner", btn).CornerRadius = UDim.new(0,6)
-    local st = Instance.new("UIStroke", btn); st.Color = DIM; st.Thickness = 1
-    tabBtns[i] = { btn=btn, stroke=st }
+local countLbl = Instance.new("TextLabel", countBar)
+countLbl.Size               = UDim2.new(1, -10, 1, 0)
+countLbl.Position           = UDim2.new(0, 8, 0, 0)
+countLbl.BackgroundTransparency = 1
+countLbl.TextColor3         = Color3.fromRGB(100, 200, 255)
+countLbl.Font               = Enum.Font.Gotham
+countLbl.TextSize           = 11
+countLbl.TextXAlignment     = Enum.TextXAlignment.Left
+countLbl.Text               = "Belum scan"
 
-    btn.MouseButton1Click:Connect(function()
-        activeSec = i
-        refreshTabs()
-        refreshInfo()
-    end)
+-- Buttons row
+local function makeBtn(text, x, w, col)
+    local b = Instance.new("TextButton", frame)
+    b.Position         = UDim2.new(0, x, 0, 72)
+    b.Size             = UDim2.new(0, w, 0, 26)
+    b.BackgroundColor3 = col
+    b.TextColor3       = Color3.new(1,1,1)
+    b.Font             = Enum.Font.GothamBold
+    b.TextSize         = 11
+    b.Text             = text
+    b.AutoButtonColor  = false
+    b.BorderSizePixel  = 0
+    Instance.new("UICorner", b).CornerRadius = UDim.new(0, 6)
+    return b
 end
 
-function refreshTabs()
-    for i, t in ipairs(tabBtns) do
-        local col = sectionList[i].color
-        local cnt = #sectionData[i]
-        local cntStr = cnt > 0 and (" ("..cnt..")") or ""
-        if i == activeSec then
-            t.btn.BackgroundColor3 = Color3.fromRGB(20,20,32)
-            t.btn.TextColor3       = col
-            t.stroke.Color         = col
-            t.btn.Text             = "SEG"..i..cntStr
-        else
-            t.btn.BackgroundColor3 = BG2
-            t.btn.TextColor3       = cnt > 0 and Color3.fromRGB(100,100,120) or DIM
-            t.stroke.Color         = cnt > 0 and Color3.fromRGB(50,50,65) or DIM
-            t.btn.Text             = "SEG"..i..cntStr
-        end
-    end
-end
+local btnScanAll   = makeBtn("🔍 Scan Semua",     8,   110, Color3.fromRGB(20,80,180))
+local btnScanWS    = makeBtn("🌐 Workspace",       124, 95,  Color3.fromRGB(30,100,50))
+local btnScanRS    = makeBtn("📦 Replicated",      225, 100, Color3.fromRGB(100,50,150))
+local btnScanRemote= makeBtn("📡 Remote Only",     331, 100, Color3.fromRGB(160,80,10))
+local btnClear     = makeBtn("🗑 Clear",            437, 60,  Color3.fromRGB(140,25,25))
 
--- ─── Info box ─────────────────────────────────────────────────
-local infoBox = Instance.new("Frame", frame)
-infoBox.Size = UDim2.new(1,-16,0,44); infoBox.Position = UDim2.new(0,8,0,84)
-infoBox.BackgroundColor3 = BG1; infoBox.BorderSizePixel = 0; infoBox.ZIndex = 3
-Instance.new("UICorner", infoBox).CornerRadius = UDim.new(0,8)
-
-local infoLine1 = Instance.new("TextLabel", infoBox)
-infoLine1.Size = UDim2.new(1,-12,0,20); infoLine1.Position = UDim2.new(0,8,0,3)
-infoLine1.BackgroundTransparency = 1; infoLine1.Font = Enum.Font.GothamBold
-infoLine1.TextSize = 11; infoLine1.TextXAlignment = Enum.TextXAlignment.Left
-infoLine1.TextColor3 = WHT; infoLine1.ZIndex = 4
-
-local infoLine2 = Instance.new("TextLabel", infoBox)
-infoLine2.Size = UDim2.new(1,-12,0,16); infoLine2.Position = UDim2.new(0,8,0,24)
-infoLine2.BackgroundTransparency = 1; infoLine2.Font = Enum.Font.Gotham
-infoLine2.TextSize = 10; infoLine2.TextXAlignment = Enum.TextXAlignment.Left
-infoLine2.TextColor3 = DIM; infoLine2.ZIndex = 4
-
-function refreshInfo()
-    local sec = sectionList[activeSec]
-    local pts = sectionData[activeSec]
-    infoLine1.TextColor3 = sec.color
-    infoLine1.Text = "▸ " .. sec.label
-    infoLine2.Text = string.format(
-        "%d titik  |  Total semua seg: %d  |  varName: %s",
-        #pts, totalPoints, sec.varName
-    )
-end
-
--- ─── Last point bar ───────────────────────────────────────────
-local lastBar = Instance.new("Frame", frame)
-lastBar.Size = UDim2.new(1,-16,0,22); lastBar.Position = UDim2.new(0,8,0,134)
-lastBar.BackgroundColor3 = BG2; lastBar.BorderSizePixel = 0; lastBar.ZIndex = 3
-Instance.new("UICorner", lastBar).CornerRadius = UDim.new(0,6)
-
-local lastLbl = Instance.new("TextLabel", lastBar)
-lastLbl.Size = UDim2.new(1,-10,1,0); lastLbl.Position = UDim2.new(0,8,0,0)
-lastLbl.BackgroundTransparency = 1; lastLbl.Font = Enum.Font.Code
-lastLbl.TextSize = 10; lastLbl.TextXAlignment = Enum.TextXAlignment.Left
-lastLbl.TextColor3 = DIM; lastLbl.ZIndex = 4
-lastLbl.Text = "Last: —"
-
--- ─── Preview scroll ───────────────────────────────────────────
+-- Scroll log
 local scroll = Instance.new("ScrollingFrame", frame)
-scroll.Size = UDim2.new(1,-16,0,90); scroll.Position = UDim2.new(0,8,0,162)
-scroll.BackgroundColor3 = Color3.fromRGB(10,10,14); scroll.BorderSizePixel = 0
-scroll.ScrollBarThickness = 3; scroll.ScrollBarImageColor3 = Color3.fromRGB(255,180,30)
+scroll.Position            = UDim2.new(0, 8, 0, 105)
+scroll.Size                = UDim2.new(1, -16, 1, -113)
+scroll.BackgroundColor3    = Color3.fromRGB(8, 8, 12)
+scroll.BorderSizePixel     = 0
+scroll.ScrollBarThickness  = 4
+scroll.ScrollBarImageColor3 = Color3.fromRGB(80,140,255)
 scroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
-scroll.CanvasSize = UDim2.new(0,0,0,0); scroll.ZIndex = 3
-Instance.new("UICorner", scroll).CornerRadius = UDim.new(0,7)
-local scrollLayout = Instance.new("UIListLayout", scroll)
-scrollLayout.SortOrder = Enum.SortOrder.LayoutOrder; scrollLayout.Padding = UDim.new(0,1)
-local scrollPad = Instance.new("UIPadding", scroll)
-scrollPad.PaddingLeft = UDim.new(0,5); scrollPad.PaddingTop = UDim.new(0,3)
+scroll.CanvasSize          = UDim2.new(0,0,0,0)
+Instance.new("UICorner", scroll).CornerRadius = UDim.new(0, 7)
 
-local previewLines = {}; local previewOrder = 0
-local function addPreview(text, color)
-    previewOrder += 1
+local layout = Instance.new("UIListLayout", scroll)
+layout.SortOrder = Enum.SortOrder.LayoutOrder
+layout.Padding   = UDim.new(0, 1)
+
+local pad = Instance.new("UIPadding", scroll)
+pad.PaddingLeft  = UDim.new(0, 5)
+pad.PaddingTop   = UDim.new(0, 4)
+pad.PaddingRight = UDim.new(0, 5)
+
+UserInputService.InputBegan:Connect(function(input, gp)
+    if not gp and input.KeyCode == Enum.KeyCode.RightControl then
+        gui.Enabled = not gui.Enabled
+    end
+end)
+
+-- =============================================
+-- Log
+-- =============================================
+local logLines = {}
+local order    = 0
+
+local C = {
+    white    = Color3.fromRGB(220, 220, 220),
+    grey     = Color3.fromRGB(100, 100, 120),
+    div      = Color3.fromRGB(28,  28,  42),
+    -- type colors
+    remote   = Color3.fromRGB(80,  200, 255),  -- RemoteEvent/Function
+    bindable = Color3.fromRGB(180, 100, 255),  -- BindableEvent/Function
+    folder   = Color3.fromRGB(255, 180, 50),   -- Folder / Model
+    prompt   = Color3.fromRGB(80,  255, 140),  -- ProximityPrompt
+    value    = Color3.fromRGB(255, 220, 80),   -- StringValue dll
+    attr     = Color3.fromRGB(255, 120, 120),  -- Attribute
+    script   = Color3.fromRGB(150, 150, 170),  -- Script
+    match    = Color3.fromRGB(255, 80,  255),  -- keyword match (highlight)
+}
+
+local function log(text, color)
+    order += 1
     local l = Instance.new("TextLabel", scroll)
-    l.Size = UDim2.new(1,-4,0,14); l.BackgroundTransparency = 1
-    l.TextColor3 = color or WHT; l.Font = Enum.Font.Code
-    l.TextSize = 10; l.TextXAlignment = Enum.TextXAlignment.Left
-    l.Text = text; l.LayoutOrder = previewOrder; l.ZIndex = 4
-    table.insert(previewLines, l)
-    task.defer(function() scroll.CanvasPosition = Vector2.new(0,math.huge) end)
+    l.Size               = UDim2.new(1, -4, 0, 0)
+    l.AutomaticSize      = Enum.AutomaticSize.Y
+    l.BackgroundTransparency = 1
+    l.TextColor3         = color or C.white
+    l.Font               = Enum.Font.Code
+    l.TextSize           = 11
+    l.TextWrapped        = true
+    l.TextXAlignment     = Enum.TextXAlignment.Left
+    l.Text               = text
+    l.LayoutOrder        = order
+    task.defer(function() scroll.CanvasPosition = Vector2.new(0, math.huge) end)
+    table.insert(logLines, l)
+    if #logLines > 600 then table.remove(logLines, 1):Destroy() end
 end
 
--- ─── Buttons ──────────────────────────────────────────────────
-local function newBtn(text, posY, col, tc)
-    local b = Instance.new("TextButton", frame)
-    b.Size = UDim2.new(1,-16,0,36); b.Position = UDim2.new(0,8,0,posY)
-    b.BackgroundColor3 = col; b.TextColor3 = tc or WHT
-    b.Font = Enum.Font.GothamBold; b.TextSize = 13; b.Text = text
-    b.AutoButtonColor = false; b.BorderSizePixel = 0; b.ZIndex = 3
-    Instance.new("UICorner", b).CornerRadius = UDim.new(0,8)
-    return b
+local function div(text)
+    log("── " .. (text or "") .. " " .. string.rep("─", math.max(0, 44 - #(text or ""))), C.div)
 end
 
-local function newHalfBtn(text, posY, xPos, col, tc)
-    local b = Instance.new("TextButton", frame)
-    b.Size = UDim2.new(0.47,0,0,34); b.Position = UDim2.new(xPos,0,0,posY)
-    b.BackgroundColor3 = col; b.TextColor3 = tc or WHT
-    b.Font = Enum.Font.GothamBold; b.TextSize = 12; b.Text = text
-    b.AutoButtonColor = false; b.BorderSizePixel = 0; b.ZIndex = 3
-    Instance.new("UICorner", b).CornerRadius = UDim.new(0,8)
-    return b
+local function clearLog()
+    for _, l in ipairs(logLines) do pcall(function() l:Destroy() end) end
+    logLines = {}
+    order    = 0
 end
-
-local Y = 258
-local btnRecord   = newBtn(     "⏺  Rekam Titik Sekarang",         Y,      Color3.fromRGB(15,80,30),   Color3.fromRGB(80,230,120))
-local btnNextSec  = newBtn(     "⏭  Lanjut Section Berikutnya",    Y+42,   Color3.fromRGB(100,75,10),  Color3.fromRGB(255,200,60))
-local btnUndo     = newHalfBtn( "↩ Undo",                          Y+84,   0.055, Color3.fromRGB(40,30,10),   Color3.fromRGB(220,160,60))
-local btnClearSeg = newHalfBtn( "🗑 Clear Seg",                     Y+84,   0.525, Color3.fromRGB(50,15,15),   Color3.fromRGB(220,80,80))
-local btnCopy     = newBtn(     "📋  Generate & Copy Output",       Y+126,  Color3.fromRGB(15,40,90),   Color3.fromRGB(80,160,255))
-
-local hintLbl = Instance.new("TextLabel", frame)
-hintLbl.Size = UDim2.new(1,-16,0,12); hintLbl.Position = UDim2.new(0,8,1,-14)
-hintLbl.BackgroundTransparency = 1; hintLbl.TextColor3 = Color3.fromRGB(40,40,55)
-hintLbl.Font = Enum.Font.Gotham; hintLbl.TextSize = 9
-hintLbl.TextXAlignment = Enum.TextXAlignment.Left; hintLbl.ZIndex = 3
-hintLbl.Text = "Jalan pelan, rekam tiap 5-10 studs. Tikungan lebih rapat."
 
 -- =============================================
---  LOGIC
+-- Determine color by class
 -- =============================================
-local function recordPoint()
-    local h = getHRP(); if not h then return end
-    local pos = h.Position
-    local pts = sectionData[activeSec]
-    table.insert(pts, pos)
-    totalPoints += 1
-
-    local n     = #pts
-    local sec   = sectionList[activeSec]
-    local txt   = string.format("#%d  %.1f, %.1f, %.1f", n, pos.X, pos.Y, pos.Z)
-    lastLbl.Text      = "Last [SEG"..activeSec.."] " .. txt
-    lastLbl.TextColor3 = sec.color
-
-    addPreview("[SEG"..activeSec.."] " .. txt, sec.color)
-    refreshTabs()
-    refreshInfo()
+local function classColor(className)
+    local cn = string.lower(className)
+    if string.find(cn, "remoteevent") or string.find(cn, "remotefunction") then return C.remote end
+    if string.find(cn, "bindable") then return C.bindable end
+    if string.find(cn, "folder") or string.find(cn, "model") then return C.folder end
+    if string.find(cn, "proximityprompt") then return C.prompt end
+    if string.find(cn, "value") then return C.value end
+    if string.find(cn, "script") then return C.script end
+    return C.white
 end
 
-local function nextSection()
-    if activeSec >= #sectionList then
-        lastLbl.Text = "✅ Semua section selesai! Tekan Generate."
-        lastLbl.TextColor3 = Color3.fromRGB(80,230,120)
-        return
-    end
-    activeSec += 1
-    addPreview("── SEG"..activeSec.." : "..sectionList[activeSec].label.." ──",
-        Color3.fromRGB(255,220,60))
-    refreshTabs()
-    refreshInfo()
-    lastLbl.Text = "📌 Pindah ke SEG"..activeSec
-    lastLbl.TextColor3 = sectionList[activeSec].color
-end
+-- =============================================
+-- Deep scan sebuah object
+-- =============================================
+local totalFound = 0
 
-local function undoLast()
-    local pts = sectionData[activeSec]
-    if #pts == 0 then
-        lastLbl.Text = "⚠ Tidak ada titik di SEG"..activeSec
-        lastLbl.TextColor3 = Color3.fromRGB(220,80,80)
-        return
-    end
-    table.remove(pts)
-    totalPoints = math.max(0, totalPoints - 1)
-    if #previewLines > 0 then
-        local l = table.remove(previewLines); l:Destroy()
-    end
-    refreshTabs(); refreshInfo()
-    lastLbl.Text = "↩ Undo SEG"..activeSec.." → "..#pts.." titik"
-    lastLbl.TextColor3 = Color3.fromRGB(220,160,60)
-end
+local function scanObject(obj, depth, source)
+    if depth > 12 then return end
+    local indent = string.rep("  ", depth)
+    local cn     = obj.ClassName
+    local name   = obj.Name
+    local nameMatch = matchKeyword(name)
 
-local function clearSeg()
-    local pts = sectionData[activeSec]
-    totalPoints = math.max(0, totalPoints - #pts)
-    sectionData[activeSec] = {}
-    -- Hapus preview lines yang milik seg ini (semua untuk simplicity)
-    for _, l in ipairs(previewLines) do l:Destroy() end
-    previewLines = {}; previewOrder = 0
-    refreshTabs(); refreshInfo()
-    lastLbl.Text = "🗑 SEG"..activeSec.." di-clear"
-    lastLbl.TextColor3 = Color3.fromRGB(220,80,80)
-end
+    -- Tentukan apakah perlu di-log
+    local shouldLog = nameMatch
 
-local function generateOutput()
-    -- Cek semua segment terisi
-    local missing = {}
-    for i, sec in ipairs(sectionList) do
-        if #sectionData[i] == 0 then
-            table.insert(missing, "SEG"..i.." ("..sec.label..")")
-        end
+    -- Selalu log: Remote, Bindable, ProximityPrompt, Script
+    local important = cn:find("Remote") or cn:find("Bindable")
+                   or cn == "ProximityPrompt"
+                   or cn:find("Script")
+    if important and matchKeyword(name) then
+        shouldLog = true
     end
 
-    local lines = {}
+    -- Log object yang match
+    if shouldLog then
+        totalFound += 1
+        local col = nameMatch and C.match or classColor(cn)
+        local tag = nameMatch and "⭐" or "  "
+        log(string.format("%s%s [%s]  %s", indent, tag, cn, name), col)
 
-    -- Header komentar
-    table.insert(lines, "-- ================================================")
-    table.insert(lines, "-- PATH RECORDER v2 EXPORT — paste ke script AI v8")
-    table.insert(lines, "-- Total: SEG1="..#sectionData[1].." | SEG2="..#sectionData[2].." | SEG3="..#sectionData[3])
-    if #missing > 0 then
-        table.insert(lines, "-- ⚠ KOSONG: " .. table.concat(missing, ", "))
-    end
-    table.insert(lines, "-- ================================================")
-    table.insert(lines, "")
-
-    -- 3 array terpisah sesuai AI v8
-    for i, sec in ipairs(sectionList) do
-        local pts = sectionData[i]
-        table.insert(lines, "local " .. sec.varName .. " = {")
-        if #pts == 0 then
-            table.insert(lines, "    -- ⚠ KOSONG — rekam section ini dulu!")
-        else
-            for j, pos in ipairs(pts) do
-                table.insert(lines, string.format(
-                    "    Vector3.new(%.2f, %.2f, %.2f), -- %d",
-                    pos.X, pos.Y, pos.Z, j
-                ))
+        -- Attributes
+        local ok, attrs = pcall(function() return obj:GetAttributes() end)
+        if ok then
+            for k, v in pairs(attrs) do
+                log(string.format("%s      attr  %s = %s", indent, k, tostring(v)), C.attr)
             end
         end
-        table.insert(lines, "}")
-        table.insert(lines, "")
+
+        -- ProximityPrompt detail
+        if cn == "ProximityPrompt" then
+            local props = {"ActionText","ObjectText","MaxActivationDistance","Enabled","HoldDuration"}
+            for _, p in ipairs(props) do
+                local ok2, val = pcall(function() return obj[p] end)
+                if ok2 then
+                    log(string.format("%s      %s = %s", indent, p, tostring(val)), C.prompt)
+                end
+            end
+        end
+
+        -- Value objects
+        if cn:find("Value") and cn ~= "LocalizationTable" then
+            local ok3, val = pcall(function() return obj.Value end)
+            if ok3 then
+                log(string.format("%s      .Value = %s", indent, tostring(val)), C.value)
+            end
+        end
+
+        -- Remote detail
+        if cn:find("Remote") or cn:find("Bindable") then
+            log(string.format("%s      path: %s", indent, obj:GetFullName()), C.grey)
+        end
     end
 
-    local result = table.concat(lines, "\n")
-
-    -- Copy ke clipboard
-    local ok = pcall(function() setclipboard(result) end)
-
-    -- Refresh preview dengan output
-    for _, l in ipairs(previewLines) do l:Destroy() end
-    previewLines = {}; previewOrder = 0
-
-    for _, line in ipairs(lines) do
-        local col = line:find("^local ") and Color3.fromRGB(255,200,60)
-            or line:find("Vector3") and Color3.fromRGB(80,220,130)
-            or line:find("⚠") and Color3.fromRGB(220,80,80)
-            or Color3.fromRGB(100,100,120)
-        addPreview(line, col)
-    end
-
-    if ok then
-        lastLbl.Text = "✅ Tersalin ke clipboard! Paste ke script AI v8."
-        lastLbl.TextColor3 = Color3.fromRGB(80,230,120)
-    else
-        lastLbl.Text = "⚠ setclipboard tidak support — screenshot preview di atas."
-        lastLbl.TextColor3 = Color3.fromRGB(255,200,60)
+    -- Rekursif ke children
+    local ok4, children = pcall(function() return obj:GetChildren() end)
+    if ok4 then
+        for _, child in ipairs(children) do
+            scanObject(child, depth + 1, source)
+        end
     end
 end
 
 -- =============================================
---  CONNECT
+-- Scan khusus remote saja
 -- =============================================
-btnRecord.MouseButton1Click:Connect(recordPoint)
-btnNextSec.MouseButton1Click:Connect(nextSection)
-btnUndo.MouseButton1Click:Connect(undoLast)
-btnClearSeg.MouseButton1Click:Connect(clearSeg)
-btnCopy.MouseButton1Click:Connect(generateOutput)
+local function scanRemotesOnly(root, sourceName)
+    div("Remote scan: " .. sourceName)
+    local count = 0
+    local function walk(obj, depth)
+        if depth > 15 then return end
+        local cn = obj.ClassName
+        if cn:find("Remote") or cn:find("Bindable") then
+            count += 1
+            local col = classColor(cn)
+            log(string.format("[%s]  %s", cn, obj:GetFullName()), col)
+            -- Attributes
+            local ok, attrs = pcall(function() return obj:GetAttributes() end)
+            if ok then
+                for k, v in pairs(attrs) do
+                    log(string.format("  attr  %s = %s", k, tostring(v)), C.attr)
+                end
+            end
+        end
+        local ok2, children = pcall(function() return obj:GetChildren() end)
+        if ok2 then
+            for _, c in ipairs(children) do walk(c, depth + 1) end
+        end
+    end
+    walk(root, 0)
+    log("Total remote/bindable di " .. sourceName .. ": " .. count, C.remote)
+    return count
+end
 
 -- =============================================
---  INIT
+-- Main scan functions
 -- =============================================
-refreshTabs()
-refreshInfo()
-addPreview("── SEG1 : "..sectionList[1].label.." ──", Color3.fromRGB(255,220,60))
+local function doScanWorkspace()
+    totalFound = 0
+    div("WORKSPACE — keyword scan")
+    scanObject(workspace, 0, "Workspace")
+    log("✅ WS done — " .. totalFound .. " match", C.match)
+end
+
+local function doScanRS()
+    totalFound = 0
+    div("REPLICATED STORAGE — keyword scan")
+    scanObject(ReplicatedStorage, 0, "ReplicatedStorage")
+    log("✅ RS done — " .. totalFound .. " match", C.match)
+end
+
+local function doScanRemoteOnly()
+    div("ALL REMOTES — full scan")
+    local total = 0
+    total += scanRemotesOnly(workspace,          "Workspace")
+    total += scanRemotesOnly(ReplicatedStorage,  "ReplicatedStorage")
+    -- Coba lokasi lain
+    pcall(function() total += scanRemotesOnly(game:GetService("Players"), "Players") end)
+    pcall(function() total += scanRemotesOnly(game:GetService("StarterGui"), "StarterGui") end)
+    log("✅ Remote scan done — total: " .. total, C.remote)
+end
+
+local function doScanAll()
+    clearLog()
+    totalFound = 0
+    log("🔍 Full scan dimulai...", C.match)
+
+    -- Workspace
+    div("WORKSPACE")
+    local wsCount = 0
+    local function walkWS(obj, depth)
+        if depth > 10 then return end
+        local nameMatch = matchKeyword(obj.Name)
+        local cn = obj.ClassName
+        local importantClass = cn:find("Remote") or cn:find("Bindable")
+                            or cn == "ProximityPrompt"
+
+        if nameMatch or importantClass then
+            local col = nameMatch and C.match or classColor(cn)
+            local tag = nameMatch and "⭐ " or ""
+            log(tag .. "[" .. cn .. "]  " .. obj:GetFullName(), col)
+            wsCount += 1; totalFound += 1
+
+            -- Detail ProximityPrompt
+            if cn == "ProximityPrompt" then
+                local props = {"ActionText","ObjectText","MaxActivationDistance","Enabled"}
+                for _, p in ipairs(props) do
+                    local ok, v = pcall(function() return obj[p] end)
+                    if ok then log("    " .. p .. " = " .. tostring(v), C.prompt) end
+                end
+            end
+
+            -- Attributes
+            local ok, attrs = pcall(function() return obj:GetAttributes() end)
+            if ok then
+                for k, v in pairs(attrs) do
+                    log("    attr  " .. k .. " = " .. tostring(v), C.attr)
+                end
+            end
+
+            -- Remote path
+            if cn:find("Remote") or cn:find("Bindable") then
+                log("    path: " .. obj:GetFullName(), C.grey)
+            end
+        end
+
+        local ok2, ch = pcall(function() return obj:GetChildren() end)
+        if ok2 then
+            for _, c in ipairs(ch) do walkWS(c, depth + 1) end
+        end
+    end
+    walkWS(workspace, 0)
+    log("WS match: " .. wsCount, C.grey)
+
+    -- ReplicatedStorage
+    div("REPLICATED STORAGE")
+    local rsCount = 0
+    local function walkRS(obj, depth)
+        if depth > 10 then return end
+        local nameMatch = matchKeyword(obj.Name)
+        local cn = obj.ClassName
+        local importantClass = cn:find("Remote") or cn:find("Bindable")
+
+        if nameMatch or importantClass then
+            local col = nameMatch and C.match or classColor(cn)
+            local tag = nameMatch and "⭐ " or ""
+            log(tag .. "[" .. cn .. "]  " .. obj:GetFullName(), col)
+            rsCount += 1; totalFound += 1
+
+            local ok, attrs = pcall(function() return obj:GetAttributes() end)
+            if ok then
+                for k, v in pairs(attrs) do
+                    log("    attr  " .. k .. " = " .. tostring(v), C.attr)
+                end
+            end
+        end
+
+        local ok2, ch = pcall(function() return obj:GetChildren() end)
+        if ok2 then
+            for _, c in ipairs(ch) do walkRS(c, depth + 1) end
+        end
+    end
+    walkRS(ReplicatedStorage, 0)
+    log("RS match: " .. rsCount, C.grey)
+
+    -- Services lain
+    local otherServices = {
+        "Players", "StarterGui", "StarterPack",
+        "StarterPlayer", "Teams", "SoundService",
+        "Chat", "TextChatService"
+    }
+    div("OTHER SERVICES")
+    for _, svcName in ipairs(otherServices) do
+        local ok, svc = pcall(function() return game:GetService(svcName) end)
+        if ok and svc then
+            local function walkSvc(obj, depth)
+                if depth > 6 then return end
+                if matchKeyword(obj.Name) then
+                    log("⭐ [" .. obj.ClassName .. "]  " .. obj:GetFullName(), C.match)
+                    totalFound += 1
+                end
+                local ok2, ch = pcall(function() return obj:GetChildren() end)
+                if ok2 then
+                    for _, c in ipairs(ch) do walkSvc(c, depth + 1) end
+                end
+            end
+            walkSvc(svc, 0)
+        end
+    end
+
+    div()
+    countLbl.Text = "✅ Scan selesai — total match: " .. totalFound
+    log("✅ Scan selesai. Total: " .. totalFound, C.match)
+end
+
+-- =============================================
+-- Button events
+-- =============================================
+btnScanAll.MouseButton1Click:Connect(function()
+    countLbl.Text = "⏳ Scanning..."
+    task.spawn(doScanAll)
+end)
+
+btnScanWS.MouseButton1Click:Connect(function()
+    clearLog()
+    countLbl.Text = "⏳ Scanning Workspace..."
+    task.spawn(function()
+        doScanWorkspace()
+        countLbl.Text = "✅ WS done — " .. totalFound .. " match"
+    end)
+end)
+
+btnScanRS.MouseButton1Click:Connect(function()
+    clearLog()
+    countLbl.Text = "⏳ Scanning ReplicatedStorage..."
+    task.spawn(function()
+        doScanRS()
+        countLbl.Text = "✅ RS done — " .. totalFound .. " match"
+    end)
+end)
+
+btnScanRemote.MouseButton1Click:Connect(function()
+    clearLog()
+    countLbl.Text = "⏳ Scanning remotes..."
+    task.spawn(doScanRemoteOnly)
+end)
+
+btnClear.MouseButton1Click:Connect(function()
+    clearLog()
+    countLbl.Text = "Log dibersihkan"
+    log("🗑 cleared", C.grey)
+end)
+
+-- Init
+log("🟢 Scanner siap — tekan salah satu tombol scan", C.match)
+log("⭐ = nama mengandung keyword  |  warna = tipe object", C.grey)
+div()
