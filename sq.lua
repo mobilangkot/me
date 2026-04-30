@@ -268,11 +268,14 @@ local function runTo(target, timeout)
 end
 
 -- Collect semua yang ada di sekitar, tanpa hitung, tanpa batas
+-- Ganti collectNearby — nyamperin tiap evidence satu per satu
 local function collectNearby()
     local folder = getEvidenceFolder()
     if not folder then return end
     local h = getHRP(); if not h then return end
 
+    -- Kumpulkan semua yang dalam radius
+    local targets = {}
     for _, model in ipairs(folder:GetChildren()) do
         local pr = getPromptFromModel(model)
         if pr then
@@ -280,15 +283,41 @@ local function collectNearby()
             if bp then
                 local d = (bp.Position - h.Position).Magnitude
                 if d <= CFG.collectRadius then
-                    pcall(function() fireproximityprompt(pr) end)
-                    task.wait(0.1)
+                    table.insert(targets, {prompt=pr, pos=bp.Position, d=d})
                 end
             end
         end
     end
+
+    if #targets == 0 then return end
+    table.sort(targets, function(a,b) return a.d < b.d end)
+
+    for _, t in ipairs(targets) do
+        if not COLLECT_ON then return end
+
+        -- Jalan ke evidence
+        local hrp = getHRP(); if not hrp then return end
+        if (hrp.Position - t.pos).Magnitude > 8 then
+            local hu = getHum()
+            if hu then
+                hu.WalkSpeed = CFG.speed
+                hu:MoveTo(t.pos)
+                local elapsed = 0
+                while elapsed < 4 do
+                    task.wait(0.1); elapsed += 0.1
+                    local cur = getHRP(); if not cur then break end
+                    if (cur.Position - t.pos).Magnitude <= 8 then break end
+                end
+            end
+        end
+
+        -- Fire
+        pcall(function() fireproximityprompt(t.prompt) end)
+        task.wait(0.2)
+    end
 end
 
--- Auto collect loop — jalan terus, collect terus, tidak peduli count
+-- Ganti runCollect — hapus semua counting
 local function runCollect()
     wpIdx = 1
     local h0 = getHRP()
