@@ -62,7 +62,7 @@ local WP_LOBBY = {
 }
 
 -- Posisi tujuan boat dekat island
-local ISLAND_BOAT_POS = Vector3.new(-2842.02, -786.00, 15529.18),
+local ISLAND_BOAT_POS = Vector3.new(-2842.02, -786.00, 15529.18)
 
 -- ================================================================
 --  CONFIG
