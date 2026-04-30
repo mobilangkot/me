@@ -494,4 +494,166 @@ mainFrame.Size   = UDim2.new(0, 260, 0, AY + 34 + 30 + 14)
 
 local hintTxt = Instance.new("TextLabel", mainFrame)
 hintTxt.Size = UDim2.new(1,-16,0,12); hintTxt.Position = UDim2.new(0,8,1,-14)
-hintTxt.BackgroundTransparency = 1; hintTxt.Text = "RightCtrl = h
+hintTxt.BackgroundTransparency = 1; hintTxt.Text = "RightCtrl = hide/show"
+hintTxt.TextColor3 = Color3.fromRGB(35,35,45); hintTxt.Font = Enum.Font.Gotham
+hintTxt.TextSize = 9; hintTxt.TextXAlignment = Enum.TextXAlignment.Left; hintTxt.ZIndex = 3
+
+local confirmFrame = Instance.new("Frame", gui)
+confirmFrame.Size = UDim2.new(0,220,0,100); confirmFrame.Position = UDim2.new(0.5,-110,0.5,-50)
+confirmFrame.BackgroundColor3 = C.bg1; confirmFrame.BorderSizePixel = 0
+confirmFrame.Visible = false; confirmFrame.ZIndex = 20
+Instance.new("UICorner", confirmFrame).CornerRadius = UDim.new(0,12)
+Instance.new("UIStroke", confirmFrame).Color = C.red
+
+local cTxt = Instance.new("TextLabel", confirmFrame)
+cTxt.Size = UDim2.new(1,-16,0,40); cTxt.Position = UDim2.new(0,8,0,10)
+cTxt.BackgroundTransparency = 1
+cTxt.Text = "Tutup semua fitur?\nWindow tidak bisa dibuka lagi."
+cTxt.TextColor3 = C.accent; cTxt.Font = Enum.Font.Gotham
+cTxt.TextSize = 11; cTxt.TextWrapped = true; cTxt.ZIndex = 21
+
+local cYes = Instance.new("TextButton", confirmFrame)
+cYes.Size = UDim2.new(0.45,0,0,26); cYes.Position = UDim2.new(0.05,0,0,60)
+cYes.BackgroundColor3 = Color3.fromRGB(40,12,12); cYes.TextColor3 = C.red
+cYes.Font = Enum.Font.GothamBold; cYes.TextSize = 11; cYes.Text = "Tutup"
+cYes.BorderSizePixel = 0; cYes.ZIndex = 22
+Instance.new("UICorner", cYes).CornerRadius = UDim.new(0,6)
+
+local cNo = Instance.new("TextButton", confirmFrame)
+cNo.Size = UDim2.new(0.45,0,0,26); cNo.Position = UDim2.new(0.5,0,0,60)
+cNo.BackgroundColor3 = C.bg2; cNo.TextColor3 = C.accent
+cNo.Font = Enum.Font.GothamBold; cNo.TextSize = 11; cNo.Text = "Batal"
+cNo.BorderSizePixel = 0; cNo.ZIndex = 22
+Instance.new("UICorner", cNo).CornerRadius = UDim.new(0,6)
+
+function updateStatus(t, col)
+    statusTxt.Text       = t or ""
+    statusTxt.TextColor3 = col or C.dim
+end
+function updateCount(n)
+    evTxt.Text = "Evidence: " .. n .. "/" .. CFG.maxEvidence
+end
+
+local MINIMIZED = false
+local function setMin(v)
+    MINIMIZED = v
+    mainFrame.Visible      = not v
+    floatContainer.Visible = v
+end
+minBtn.MouseButton1Click:Connect(function() setMin(true) end)
+floatBtn.MouseButton1Click:Connect(function() setMin(false) end)
+
+local function shutdown()
+    CLOSED = true; COLLECT_ON = false; SPEED_ON = false
+    NOCLIP_ON = false; HL_ON = false; autoNoclipActive = false
+    applyNoclip(false); clearHighlights(); resetSpeed()
+    if speedConn  then speedConn:Disconnect()  end
+    if noclipConn then noclipConn:Disconnect() end
+    gui:Destroy()
+end
+closeBtn.MouseButton1Click:Connect(function() confirmFrame.Visible = true end)
+cYes.MouseButton1Click:Connect(function() confirmFrame.Visible = false; shutdown() end)
+cNo.MouseButton1Click:Connect(function() confirmFrame.Visible = false end)
+
+UserInputService.InputBegan:Connect(function(i, gp)
+    if not gp and i.KeyCode == Enum.KeyCode.RightControl and not CLOSED then
+        if MINIMIZED then setMin(false)
+        else mainFrame.Visible = not mainFrame.Visible end
+    end
+end)
+
+hlBtn.MouseButton1Click:Connect(function()
+    HL_ON = not HL_ON; setPill(hlPill, HL_ON)
+    if not HL_ON then clearHighlights() end
+end)
+spBtn.MouseButton1Click:Connect(function()
+    SPEED_ON = not SPEED_ON; setPill(spPill, SPEED_ON)
+    if not SPEED_ON then resetSpeed() end
+end)
+ncBtn.MouseButton1Click:Connect(function()
+    NOCLIP_ON = not NOCLIP_ON; setPill(ncPill, NOCLIP_ON)
+    if not NOCLIP_ON and not autoNoclipActive then applyNoclip(false) end
+end)
+babyBtn.MouseButton1Click:Connect(function()
+    BABY_ON = not BABY_ON; setPill(babyPill, BABY_ON)
+end)
+autoBtn.MouseButton1Click:Connect(function()
+    AUTO_COLLECT = not AUTO_COLLECT; setPill(autoPill, AUTO_COLLECT)
+end)
+
+collectBtn.MouseButton1Click:Connect(function()
+    COLLECT_ON = not COLLECT_ON
+    setPill(collectPill, COLLECT_ON)
+    if COLLECT_ON then
+        collected = 0; updateCount(0)
+        task.spawn(runCollect)
+    else
+        updateStatus("Auto collect stop", C.dim)
+    end
+end)
+
+tpBtn.MouseButton1Click:Connect(function()
+    if #foundModels == 0 then return end
+    local h = getHRP(); if not h then return end
+    local best, bestD = nil, math.huge
+    for _, m in ipairs(foundModels) do
+        local bp = m.PrimaryPart or m:FindFirstChildWhichIsA("BasePart", true)
+        if bp then
+            local d = (bp.Position - h.Position).Magnitude
+            if d < bestD then best = bp; bestD = d end
+        end
+    end
+    if best then h.CFrame = CFrame.new(best.Position + Vector3.new(0,4,0)) end
+end)
+
+respawnBtn.MouseButton1Click:Connect(doRespawn)
+
+task.spawn(function()
+    while true do
+        task.wait(0.5)
+        if CLOSED then break end
+        local h = getHRP(); if not h or not h.Parent then task.wait(1); continue end
+        local folder = getEvidenceFolder(); if not folder then continue end
+
+        clearHighlights(); foundModels = {}
+        local nearest, bestD = nil, math.huge
+        for _, model in ipairs(folder:GetChildren()) do
+            local pr = getPromptFromModel(model)
+            if pr then
+                local bp = model.PrimaryPart or model:FindFirstChildWhichIsA("BasePart", true)
+                if bp then
+                    local d = (bp.Position - h.Position).Magnitude
+                    if d <= 15000 then
+                        table.insert(foundModels, model)
+                        if d < bestD then nearest = model; bestD = d end
+                        if AUTO_COLLECT and not COLLECT_ON then
+                            pcall(function() fireproximityprompt(pr) end)
+                        end
+                    end
+                end
+            end
+        end
+        if HL_ON then
+            for _, m in ipairs(foundModels) do addHighlight(m, m == nearest) end
+        end
+    end
+end)
+
+LP.CharacterAdded:Connect(function(char)
+    task.wait(1.5)
+    if SPEED_ON then
+        local hum = char:FindFirstChildOfClass("Humanoid")
+        if hum then
+            hum.UseJumpPower = true
+            hum.WalkSpeed    = CFG.speed
+            hum.JumpPower    = CFG.jumpPower
+        end
+    end
+    if COLLECT_ON then
+        task.wait(1)
+        collected = 0; updateCount(0)
+        task.spawn(runCollect)
+    end
+end)
+
+updateStatus("Ready v12", C.ok)
