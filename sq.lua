@@ -81,6 +81,20 @@ local autoNoclipActive = false
 local foundModels      = {}
 local highlights       = {}
 
+-- Deklarasi awal agar bisa dipanggil sebelum GUI dibuat
+local statusTxt
+local evTxt
+
+local function updateStatus(t, col)
+    if not statusTxt then return end
+    statusTxt.Text       = t or ""
+    statusTxt.TextColor3 = col or Color3.fromRGB(90,90,100)
+end
+local function updateCount(n)
+    if not evTxt then return end
+    evTxt.Text = "Evidence: " .. n .. "/" .. CFG.maxEvidence
+end
+
 local speedConn
 local function startSpeedLoop()
     if speedConn then speedConn:Disconnect() end
@@ -294,7 +308,7 @@ local function runCollect()
     wpIdx = 1
     local h0 = getHRP()
     if h0 then wpIdx = nearestWpIndex(WP_LOBBY, h0.Position) end
-    updateStatus("Auto collect lobby aktif", Color3.fromRGB(120,160,220))
+    updateStatus("Auto collect aktif", Color3.fromRGB(120,160,220))
 
     while COLLECT_ON do
         if CLOSED then break end
@@ -302,7 +316,7 @@ local function runCollect()
         if not h then task.wait(0.5); continue end
 
         if collected >= CFG.maxEvidence then
-            updateStatus("Penuh " .. collected .. "/8 - tunggu deposit manual", Color3.fromRGB(100,200,140))
+            updateStatus("Penuh " .. collected .. "/8 - deposit manual", Color3.fromRGB(100,200,140))
             task.wait(1); continue
         end
 
@@ -417,7 +431,8 @@ statusBar.Size = UDim2.new(1,-16,0,22); statusBar.Position = UDim2.new(0,8,0,50)
 statusBar.BackgroundColor3 = C.bg2; statusBar.BorderSizePixel = 0; statusBar.ZIndex = 3
 Instance.new("UICorner", statusBar).CornerRadius = UDim.new(0,6)
 
-local statusTxt = Instance.new("TextLabel", statusBar)
+-- Assign ke variable yang sudah dideklarasi di atas
+statusTxt = Instance.new("TextLabel", statusBar)
 statusTxt.Size = UDim2.new(1,-10,1,0); statusTxt.Position = UDim2.new(0,8,0,0)
 statusTxt.BackgroundTransparency = 1; statusTxt.Text = "Ready"
 statusTxt.TextColor3 = C.dim; statusTxt.Font = Enum.Font.Gotham
@@ -427,7 +442,7 @@ local infoRow = Instance.new("Frame", mainFrame)
 infoRow.Size = UDim2.new(1,-16,0,20); infoRow.Position = UDim2.new(0,8,0,76)
 infoRow.BackgroundTransparency = 1; infoRow.ZIndex = 3
 
-local evTxt = Instance.new("TextLabel", infoRow)
+evTxt = Instance.new("TextLabel", infoRow)
 evTxt.Size = UDim2.new(1,0,1,0); evTxt.BackgroundTransparency = 1
 evTxt.Text = "Evidence: 0/8"; evTxt.TextColor3 = C.ok
 evTxt.Font = Enum.Font.GothamBold; evTxt.TextSize = 10
@@ -468,12 +483,12 @@ end
 
 local function rY(i) return ROW_Y + (i-1)*(ROW_H+ROW_GAP) end
 
-local hlPill,      hlBtn      = mkRow("Highlight",        "H",  rY(1))
-local spPill,      spBtn      = mkRow("Speed + Jump",     "S",  rY(2))
-local ncPill,      ncBtn      = mkRow("Noclip",           "N",  rY(3))
-local collectPill, collectBtn = mkRow("Auto Collect Lobby","C", rY(4))
-local autoPill,    autoBtn    = mkRow("Auto Collect Scan", "AC", rY(5))
-local babyPill,    babyBtn    = mkRow("Auto Baby",        "B",  rY(6))
+local hlPill,      hlBtn      = mkRow("Highlight",         "H",  rY(1))
+local spPill,      spBtn      = mkRow("Speed + Jump",      "S",  rY(2))
+local ncPill,      ncBtn      = mkRow("Noclip",            "N",  rY(3))
+local collectPill, collectBtn = mkRow("Auto Collect Lobby", "C", rY(4))
+local autoPill,    autoBtn    = mkRow("Auto Collect Scan",  "AC", rY(5))
+local babyPill,    babyBtn    = mkRow("Auto Baby",         "B",  rY(6))
 setPill(hlPill, true)
 
 local AY = rY(7)
@@ -526,14 +541,9 @@ cNo.Font = Enum.Font.GothamBold; cNo.TextSize = 11; cNo.Text = "Batal"
 cNo.BorderSizePixel = 0; cNo.ZIndex = 22
 Instance.new("UICorner", cNo).CornerRadius = UDim.new(0,6)
 
-function updateStatus(t, col)
-    statusTxt.Text       = t or ""
-    statusTxt.TextColor3 = col or C.dim
-end
-function updateCount(n)
-    evTxt.Text = "Evidence: " .. n .. "/" .. CFG.maxEvidence
-end
-
+-- ================================================================
+--  MINIMIZE / CLOSE
+-- ================================================================
 local MINIMIZED = false
 local function setMin(v)
     MINIMIZED = v
@@ -562,6 +572,9 @@ UserInputService.InputBegan:Connect(function(i, gp)
     end
 end)
 
+-- ================================================================
+--  TOGGLES
+-- ================================================================
 hlBtn.MouseButton1Click:Connect(function()
     HL_ON = not HL_ON; setPill(hlPill, HL_ON)
     if not HL_ON then clearHighlights() end
@@ -580,7 +593,6 @@ end)
 autoBtn.MouseButton1Click:Connect(function()
     AUTO_COLLECT = not AUTO_COLLECT; setPill(autoPill, AUTO_COLLECT)
 end)
-
 collectBtn.MouseButton1Click:Connect(function()
     COLLECT_ON = not COLLECT_ON
     setPill(collectPill, COLLECT_ON)
@@ -591,7 +603,6 @@ collectBtn.MouseButton1Click:Connect(function()
         updateStatus("Auto collect stop", C.dim)
     end
 end)
-
 tpBtn.MouseButton1Click:Connect(function()
     if #foundModels == 0 then return end
     local h = getHRP(); if not h then return end
@@ -605,9 +616,11 @@ tpBtn.MouseButton1Click:Connect(function()
     end
     if best then h.CFrame = CFrame.new(best.Position + Vector3.new(0,4,0)) end
 end)
-
 respawnBtn.MouseButton1Click:Connect(doRespawn)
 
+-- ================================================================
+--  SCAN LOOP
+-- ================================================================
 task.spawn(function()
     while true do
         task.wait(0.5)
@@ -639,6 +652,9 @@ task.spawn(function()
     end
 end)
 
+-- ================================================================
+--  RESPAWN
+-- ================================================================
 LP.CharacterAdded:Connect(function(char)
     task.wait(1.5)
     if SPEED_ON then
