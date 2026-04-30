@@ -181,6 +181,10 @@ local CFG = {
     -- Batas Y untuk deteksi "jatuh keluar dunia"
     sanityYMin    = -1000,
     sanityYMax    =  500,
+
+    lobbyXMin = 8100, lobbyXMax = 8250,
+lobbyZMin = 3460, lobbyZMax = 3760,
+lobbyYMin = 79,   lobbyYMax = 125,
 }
 
 -- ================================================================
@@ -322,6 +326,11 @@ end
 --  SANITY CHECK
 --  Kembalikan true jika posisi masih "masuk akal" untuk phase ini
 -- ================================================================
+local function isInLobbyBounds(pos)
+    return pos.X >= CFG.lobbyXMin and pos.X <= CFG.lobbyXMax
+       and pos.Z >= CFG.lobbyZMin and pos.Z <= CFG.lobbyZMax
+       and pos.Y >= CFG.lobbyYMin and pos.Y <= CFG.lobbyYMax
+end
 local function isSane(pos, phase, wpIdx)
     if not pos then return false, "NO_POS" end
 
@@ -335,8 +344,11 @@ local function isSane(pos, phase, wpIdx)
     if (phase == "ISLAND_TO_LIFT" or phase == "ISLAND_DEPOSIT") and zone == "LOBBY" then
         return false, "WRONG_ZONE_IN_LOBBY"
     end
-    if (phase == "LOBBY_FARM" or phase == "LOBBY_TO_LIFT") and zone == "ISLAND" then
-        return false, "WRONG_ZONE_IN_ISLAND"
+    if (phase == "LOBBY_FARM" or phase == "LOBBY_TO_LIFT") and zone == "LOBBY" then
+        -- Masih di Y lobby tapi mungkin di luar batas XZ
+        if not isInLobbyBounds(pos) then
+            return false, "OUT_OF_LOBBY_BOUNDS"
+        end
     end
 
     -- Terlalu jauh dari WP target saat ini
@@ -473,6 +485,11 @@ end
 -- ================================================================
 --  COLLECT NEARBY
 -- ================================================================
+local function isPosInLobby(pos)
+    return pos.X >= CFG.lobbyXMin and pos.X <= CFG.lobbyXMax
+       and pos.Z >= CFG.lobbyZMin and pos.Z <= CFG.lobbyZMax
+       and pos.Y >= CFG.lobbyYMin and pos.Y <= CFG.lobbyYMax
+end
 local function collectNearby()
     if collected >= CFG.maxEvidence then return end
     local folder = getEvidenceFolder(); if not folder then return end
@@ -495,17 +512,27 @@ local function collectNearby()
     if #nearby == 0 then return end
     table.sort(nearby, function(a, b) return a.d < b.d end)
 
-    for _, ev in ipairs(nearby) do
-        if not AI_ON then return end
-        if collected >= CFG.maxEvidence then break end
-        updateStatus("📦 " .. ev.name, nil)
-        pcall(function() fireproximityprompt(ev.prompt) end)
-        task.wait(0.15)
-        if ev.d > 10 then firePromptAt(ev.prompt, ev.pos) end
-        collected += 1
-        updateCount(collected)
-        task.wait(0.15)
+   -- Di dalam collectNearby(), ganti bagian loop:
+for _, ev in ipairs(nearby) do
+    if not AI_ON then return end
+    if collected >= CFG.maxEvidence then break end
+
+    -- ✅ TAMBAHAN: skip evidence di luar batas lobby
+    if aiPhase == "LOBBY_FARM" or aiPhase == "LOBBY_TO_LIFT" then
+        if not isPosInLobby(ev.pos) then
+            updateStatus("⚠ Skip ev luar batas: "..ev.name, C.warn)
+            continue
+        end
     end
+
+    updateStatus("📦 " .. ev.name, nil)
+    pcall(function() fireproximityprompt(ev.prompt) end)
+    task.wait(0.15)
+    if ev.d > 10 then firePromptAt(ev.prompt, ev.pos) end
+    collected += 1
+    updateCount(collected)
+    task.wait(0.15)
+end
 end
 
 -- ================================================================
@@ -1003,19 +1030,41 @@ function runAI()
             if not sane then
                 updateStatus("⚠ Nyasar ["..reason.."] → recovery", C.red)
                 task.wait(0.3)
-
-                -- Re-detect phase dari posisi sekarang
+            
                 local newPhase, newWp = detectPhaseFromPosition(
                     h2.Position, lastSafePhase, collected
                 )
                 aiPhase      = newPhase
                 aiWpIndex    = newWp
                 liftAttempts = 0
+            
+                -- ✅ TAMBAHAN: hard teleport ke WP terdekat yang aman
+                local snapArray = nil
+                if newPhase == "LOBBY_FARM" or newPhase == "LOBBY_TO_LIFT" then
+                    snapArray = WP_LOBBY
+                elseif newPhase == "ISLAND_TO_LIFT" then
+                    snapArray = WP_ISLAND_TO_LIFT
+                elseif newPhase == "ISLAND_DEPOSIT" then
+                    snapArray = WP_ISLAND_BACK
+                end
+            
+                if snapArray then
+                    local snapIdx = nearestWpIndex(snapArray, h2.Position)
+                    local snapPos = snapArray[snapIdx]
+                    -- Teleport karakter ke WP aman
+                    local hrp = getHRP()
+                    if hrp then
+                        hrp.CFrame = CFrame.new(snapPos + Vector3.new(0, 4, 0))
+                        task.wait(0.6)
+                    end
+                    aiWpIndex = snapIdx
+                    updateStatus(string.format("📌 Snap ke WP%d (%s)", snapIdx, newPhase), C.warn)
+                end
+            
                 updatePhase(aiPhase)
-                updateStatus(string.format("🔄 Recovery → %s WP%d", aiPhase, aiWpIndex), C.warn)
                 task.wait(0.5)
                 continue
-            else
+            end
                 -- Posisi aman → simpan sebagai safe state
                 lastSafePhase   = aiPhase
                 lastSafeWpIndex = aiWpIndex
@@ -1124,6 +1173,15 @@ function runAI()
                 aiWpIndex, #WP_LOBBY, collected, CFG.maxEvidence), C.info)
             walkTo(target, CFG.moveTimeout)
             if not AI_ON then break end
+            local postWalk = getHRP()
+            if postWalk and not isInLobbyBounds(postWalk.Position) then
+                updateStatus("⚠ Post-walk keluar batas! Snap balik...", C.red)
+                local snapIdx = nearestWpIndex(WP_LOBBY, postWalk.Position)
+                postWalk.CFrame = CFrame.new(WP_LOBBY[snapIdx] + Vector3.new(0,4,0))
+                task.wait(0.5)
+                aiWpIndex = snapIdx
+                continue
+            end
             collectNearby()
             if not AI_ON then break end
             aiWpIndex += 1
