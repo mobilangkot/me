@@ -230,16 +230,33 @@ end
 -- ================================================================
 local CFG = {
     maxEvidence    = 8,
-    collectRadius  = 25,   -- radius collect lebih luas
+    collectRadius  = 25,
     promptReach    = 7,
     wpReach        = 6,
-    moveTimeout    = 6,
+    moveTimeout    = 8,
     liftWait       = 6,
     depositWait    = 3,
     stopTimeout    = 0.6,
-    walkSpeed      = 100,
-    jumpPower      = 80,
     scanInterval   = 0.5,
+
+    -- Speed tiers
+    speedFlat      = 100,  -- datar / turun
+    speedSlope     = 55,   -- nanjak sedang  (deltaY 5–15 per 50 stud)
+    speedSteep     = 28,   -- nanjak curam   (deltaY > 15 per 50 stud)
+    jumpNormal     = 80,
+    jumpSlope      = 55,   -- loncat lebih pelan saat nanjak
+    jumpSteep      = 35,
+
+    -- Slope thresholds (rasio deltaY / hDist)
+    slopeThreshMed  = 0.10,  -- 10% = sedang
+    slopeThreshHigh = 0.25,  -- 25% = curam
+
+    -- Micro-step: jarak per langkah saat noclip+nanjak
+    microStepDist   = 12,   -- studs per step
+    microStepWait   = 0.08, -- detik antar step
+
+    -- Y-drift guard: kalau Y drop > nilai ini dalam 1 step → koreksi
+    yDriftMax       = 8,    -- studs
 }
 
 -- ================================================================
@@ -257,6 +274,11 @@ local foundModels = {}
 local highlights  = {}
 local CLOSED      = false
 
+-- Slope state — diupdate tiap walkTo
+local currentSlope = "FLAT"  -- "FLAT" | "SLOPE" | "STEEP"
+local currentSpeed = 100
+local currentJump  = 80
+
 -- ================================================================
 --  HELPERS
 -- ================================================================
@@ -273,7 +295,35 @@ local function getHum()
 end
 
 -- ================================================================
---  SPEED
+--  SLOPE DETECTION
+--  Hitung rasio kemiringan dari posisi sekarang ke target WP
+--  Return: "FLAT" | "SLOPE" | "STEEP", speed, jumpPower
+-- ================================================================
+local function calcSlope(fromPos, toPos)
+    local hDist = Vector2.new(toPos.X - fromPos.X, toPos.Z - fromPos.Z).Magnitude
+    if hDist < 1 then return "FLAT", CFG.speedFlat, CFG.jumpNormal end
+    local deltaY = toPos.Y - fromPos.Y  -- positif = nanjak, negatif = turun
+
+    -- Hanya peduli nanjak (negatif = turun, aman)
+    if deltaY <= 0 then
+        return "FLAT", CFG.speedFlat, CFG.jumpNormal
+    end
+
+    local ratio = deltaY / hDist
+    if ratio >= CFG.slopeThreshHigh then
+        return "STEEP", CFG.speedSteep, CFG.jumpSteep
+    elseif ratio >= CFG.slopeThreshMed then
+        return "SLOPE", CFG.speedSlope, CFG.jumpSlope
+    else
+        return "FLAT", CFG.speedFlat, CFG.jumpNormal
+    end
+end
+
+-- Label slope untuk UI
+local SLOPE_ICON = { FLAT="—", SLOPE="↗", STEEP="⬆" }
+
+-- ================================================================
+--  SPEED — dinamis berdasarkan slope
 -- ================================================================
 local speedConn
 local function startSpeedLoop()
@@ -283,8 +333,14 @@ local function startSpeedLoop()
         local c = LP.Character; if not c then return end
         local hum = resolveHumanoid(c); if not hum then return end
         hum.UseJumpPower = true
-        hum.WalkSpeed    = CFG.walkSpeed
-        hum.JumpPower    = CFG.jumpPower
+        -- Saat AI aktif, pakai speed slope-aware; saat manual, full speed
+        if AI_ON then
+            hum.WalkSpeed = currentSpeed
+            hum.JumpPower = currentJump
+        else
+            hum.WalkSpeed = CFG.speedFlat
+            hum.JumpPower = CFG.jumpNormal
+        end
     end)
 end
 
@@ -292,8 +348,8 @@ local function applySpeed(char)
     local hum = resolveHumanoid(char); if not hum then return end
     hum.UseJumpPower = true
     if SPEED_ON then
-        hum.WalkSpeed = CFG.walkSpeed
-        hum.JumpPower = CFG.jumpPower
+        hum.WalkSpeed = AI_ON and currentSpeed or CFG.speedFlat
+        hum.JumpPower = AI_ON and currentJump  or CFG.jumpNormal
     else
         hum.WalkSpeed = 16
         hum.JumpPower = 50
@@ -394,29 +450,113 @@ local function teleportToWP(wpIdx)
 end
 
 -- ================================================================
---  WALK TO — smooth dengan sanity check
+--  WALK TO — slope-aware dengan micro-step & Y-drift guard
 -- ================================================================
 local function walkTo(target, timeoutSec)
     local hu = getHum(); local h = getHRP()
     if not hu or not h then return false end
     if (h.Position - target).Magnitude <= CFG.wpReach then return true end
 
-    hu:MoveTo(target)
-    local t = 0
-    local limit = timeoutSec or CFG.moveTimeout
-    while t < limit do
-        task.wait(0.1); t += 0.1
-        if not AI_ON then return false end
-        local cur = getHRP()
-        if not cur then return false end
-        if (cur.Position - target).Magnitude <= CFG.wpReach then return true end
-        -- Re-issue MoveTo tiap 1.5 detik agar tidak drift
-        if t % 1.5 < 0.1 then
-            local hu2 = getHum()
-            if hu2 then hu2:MoveTo(target) end
-        end
+    -- Hitung slope ke target
+    local slope, spd, jmp = calcSlope(h.Position, target)
+    currentSlope = slope
+    currentSpeed = spd
+    currentJump  = jmp
+
+    local isSteepOrSlope = (slope == "STEEP" or slope == "SLOPE")
+    local useNoclip      = NOCLIP_ON and isSteepOrSlope
+
+    -- Update speed humanoid langsung
+    if SPEED_ON then
+        hu.UseJumpPower = true
+        hu.WalkSpeed    = spd
+        hu.JumpPower    = jmp
     end
-    return false
+
+    -- ── MICRO-STEP MODE (noclip + nanjak) ────────────────────────
+    -- Jalan dalam langkah kecil agar tidak tembus lantai/dinding
+    if useNoclip then
+        local limit     = timeoutSec or CFG.moveTimeout
+        local elapsed   = 0
+        local prevY     = h.Position.Y
+
+        while elapsed < limit do
+            if not AI_ON then return false end
+            local cur = getHRP(); if not cur then return false end
+
+            local dist = (cur.Position - target).Magnitude
+            if dist <= CFG.wpReach then return true end
+
+            -- Re-hitung slope secara berkala (bisa berubah di tengah jalan)
+            local newSlope, newSpd, newJmp = calcSlope(cur.Position, target)
+            if newSlope ~= currentSlope then
+                currentSlope = newSlope; currentSpeed = newSpd; currentJump = newJmp
+                local hum2 = getHum()
+                if hum2 and SPEED_ON then
+                    hum2.WalkSpeed = newSpd; hum2.JumpPower = newJmp
+                end
+            end
+
+            -- Hitung arah micro-step
+            local dir    = (target - cur.Position).Unit
+            local stepTarget = cur.Position + dir * math.min(CFG.microStepDist, dist)
+
+            -- Y-drift guard: pertahankan Y WP jika drop terlalu jauh
+            local expectedY = cur.Position.Y + (target.Y - cur.Position.Y) *
+                              (CFG.microStepDist / math.max(dist, 1))
+            local hu2 = getHum()
+            if hu2 then hu2:MoveTo(stepTarget) end
+
+            task.wait(CFG.microStepWait)
+            elapsed += CFG.microStepWait
+
+            -- Cek Y drift (tembus lantai?)
+            local afterH = getHRP()
+            if afterH then
+                local yDrop = prevY - afterH.Position.Y
+                if yDrop > CFG.yDriftMax then
+                    -- Koreksi: angkat kembali ke Y yang diharapkan + buffer
+                    afterH.CFrame = CFrame.new(
+                        afterH.Position.X,
+                        prevY + 2,  -- angkat ke Y sebelumnya + buffer kecil
+                        afterH.Position.Z
+                    )
+                    updateStatus("⚠ Y-drift → koreksi", C.warn)
+                    task.wait(0.1)
+                end
+                prevY = afterH.Position.Y
+            end
+        end
+        return false
+
+    -- ── NORMAL MODE (flat / turun / noclip off) ───────────────────
+    else
+        hu:MoveTo(target)
+        local t = 0
+        local limit = timeoutSec or CFG.moveTimeout
+        while t < limit do
+            task.wait(0.1); t += 0.1
+            if not AI_ON then return false end
+            local cur = getHRP(); if not cur then return false end
+            if (cur.Position - target).Magnitude <= CFG.wpReach then return true end
+            -- Re-issue MoveTo tiap 1.5 detik agar tidak drift
+            if t % 1.5 < 0.11 then
+                -- Re-hitung slope (karena Y berubah saat jalan)
+                local newSlope, newSpd, newJmp = calcSlope(cur.Position, target)
+                currentSlope = newSlope; currentSpeed = newSpd; currentJump = newJmp
+                local hu2 = getHum()
+                if hu2 then
+                    hu2:MoveTo(target)
+                    if SPEED_ON then
+                        hu2.UseJumpPower = true
+                        hu2.WalkSpeed    = newSpd
+                        hu2.JumpPower    = newJmp
+                    end
+                end
+            end
+        end
+        return false
+    end
 end
 
 -- ================================================================
@@ -601,7 +741,7 @@ local subTxt = Instance.new("TextLabel", header)
 subTxt.Size              = UDim2.new(1, -80, 0, 12)
 subTxt.Position          = UDim2.new(0, 14, 0, 28)
 subTxt.BackgroundTransparency = 1
-subTxt.Text              = "cr : menzcreate"
+subTxt.Text              = "CR : menzcreate"
 subTxt.TextColor3        = C.dim
 subTxt.Font              = Enum.Font.Gotham
 subTxt.TextSize          = 10
@@ -747,7 +887,7 @@ local function rowY(i) return ROW_Y + (i-1)*(ROW_H+ROW_GAP) end
 local _, hlPill,   hlBtn   = mkToggleRow("Highlight",    "◈",  rowY(1))
 local _, spPill,   spBtn   = mkToggleRow("Speed + Jump", "⚡", rowY(2))
 local _, ncPill,   ncBtn   = mkToggleRow("Noclip",       "◉",  rowY(3))
-local _, aiPill,   aiBtn   = mkToggleRow("AI Farming (Beta)",   "🤖", rowY(4))
+local _, aiPill,   aiBtn   = mkToggleRow("AI Farming (beta)",   "🤖", rowY(4))
 local _, autoPill, autoBtn = mkToggleRow("Auto Collect", "📦", rowY(5))
 local _, babyPill, babyBtn = mkToggleRow("Auto Baby",    "🍼", rowY(6))
 
@@ -1164,7 +1304,12 @@ function runAI()
         --  JALAN KE WP
         -- ──────────────────────────────────────────────────────
         local target = WAYPOINTS[currentWP]
-        updateStatus(string.format("🚶 WP %d", currentWP), C.info)
+
+        -- Hitung slope SEBELUM jalan → tampil di status
+        local preSlope, _, _ = calcSlope(h2.Position, target)
+        local slopeIcon = SLOPE_ICON[preSlope] or "—"
+        updateStatus(string.format("🚶 WP %d  %s", currentWP, slopeIcon), C.info)
+
         walkTo(target, CFG.moveTimeout)
 
         if not AI_ON then break end
