@@ -1075,7 +1075,7 @@ function runAI()
     task.wait(0.5)
 
     local lastSanityCheck = tick()
-    local SANITY_INTERVAL = 2.0
+    local SANITY_INTERVAL = 0.5
 
     while AI_ON do
         if CLOSED then break end
