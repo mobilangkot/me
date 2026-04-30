@@ -17,9 +17,6 @@ local function getHum()
     return c and c:FindFirstChildOfClass("Humanoid")
 end
 
--- ================================================================
---  WAYPOINTS LOBBY
--- ================================================================
 local WP_LOBBY = {
     Vector3.new(8161.51, 100.58, 3467.29),
     Vector3.new(8161.72, 100.64, 3479.62),
@@ -61,12 +58,6 @@ local WP_LOBBY = {
     Vector3.new(8160.07, 100.64, 3475.56),
 }
 
--- Posisi tujuan boat dekat island
-local ISLAND_BOAT_POS = Vector3.new(-2842.02, -786.00, 15529.18)
-
--- ================================================================
---  CONFIG
--- ================================================================
 local CFG = {
     maxEvidence   = 8,
     collectRadius = 35,
@@ -76,9 +67,6 @@ local CFG = {
     jumpPower     = 70,
 }
 
--- ================================================================
---  STATE
--- ================================================================
 local COLLECT_ON   = false
 local SPEED_ON     = false
 local NOCLIP_ON    = false
@@ -93,9 +81,6 @@ local autoNoclipActive = false
 local foundModels      = {}
 local highlights       = {}
 
--- ================================================================
---  SPEED
--- ================================================================
 local speedConn
 local function startSpeedLoop()
     if speedConn then speedConn:Disconnect() end
@@ -115,9 +100,6 @@ local function resetSpeed()
 end
 startSpeedLoop()
 
--- ================================================================
---  NOCLIP
--- ================================================================
 local noclipConn
 local function applyNoclip(state)
     local c = LP.Character; if not c then return end
@@ -128,16 +110,11 @@ end
 local function startNoclip()
     if noclipConn then noclipConn:Disconnect() end
     noclipConn = RunService.Stepped:Connect(function()
-        if NOCLIP_ON or autoNoclipActive then
-            applyNoclip(true)
-        end
+        if NOCLIP_ON or autoNoclipActive then applyNoclip(true) end
     end)
 end
 startNoclip()
 
--- ================================================================
---  HIGHLIGHT
--- ================================================================
 local function clearHighlights()
     for _, h in ipairs(highlights) do pcall(function() h:Destroy() end) end
     highlights = {}
@@ -153,9 +130,6 @@ local function addHighlight(target, isNearest)
     table.insert(highlights, h)
 end
 
--- ================================================================
---  HELPERS
--- ================================================================
 local function getPromptFromModel(model)
     for _, d in ipairs(model:GetDescendants()) do
         if d:IsA("ProximityPrompt") then
@@ -191,9 +165,6 @@ local function doRespawn()
     if h then h.Health = 0 end
 end
 
--- ================================================================
---  AUTO BABY
--- ================================================================
 local function fireAllBaby()
     for _, obj in ipairs(workspace:GetDescendants()) do
         if obj:IsA("ProximityPrompt") and
@@ -215,109 +186,6 @@ if babyAction then
     end)
 end
 
--- ================================================================
---  BOAT FINDER
---  Cari VehicleSeat/Seat yang ada kata "boat" di nama atau parentnya
---  Lalu gerakkan ke dekat island
--- ================================================================
-local function findBoat()
-    -- Cek apakah player sedang duduk di seat
-    local char = getChar(); if not char then return nil end
-    local hrp  = getHRP();  if not hrp  then return nil end
-
-    -- Cek seat via Humanoid.SeatPart
-    local hum = getHum()
-    if hum and hum.SeatPart then
-        local seat = hum.SeatPart
-        -- Cek apakah seat atau parentnya ada kata "boat"
-        local function hasBoat(obj)
-            if not obj then return false end
-            if string.lower(obj.Name):find("boat") then return true end
-            local parent = obj.Parent
-            while parent and parent ~= workspace do
-                if string.lower(parent.Name):find("boat") then return true end
-                parent = parent.Parent
-            end
-            return false
-        end
-        if hasBoat(seat) then
-            -- Cari root model boat
-            local root = seat
-            while root.Parent and root.Parent ~= workspace do
-                root = root.Parent
-            end
-            return root
-        end
-    end
-
-    -- Fallback: scan workspace untuk seat dekat player
-    for _, obj in ipairs(workspace:GetDescendants()) do
-        if (obj.ClassName == "VehicleSeat" or obj.ClassName == "Seat") then
-            local nameLower = string.lower(obj.Name)
-            local parentLower = obj.Parent and string.lower(obj.Parent.Name) or ""
-            if nameLower:find("boat") or parentLower:find("boat") then
-                -- Cek apakah player duduk di sini
-                if obj.Occupant then
-                    local occ = obj.Occupant
-                    if occ.Parent == char then
-                        local root = obj
-                        while root.Parent and root.Parent ~= workspace do
-                            root = root.Parent
-                        end
-                        return root
-                    end
-                end
-            end
-        end
-    end
-    return nil
-end
-
-local function moveBoatToIsland()
-    local boat = findBoat()
-    if not boat then
-        updateStatus("Boat tidak ditemukan / tidak sedang duduk", Color3.fromRGB(220,160,60))
-        return false
-    end
-
-    -- Cari PrimaryPart atau BasePart pertama
-    local rootPart = nil
-    if boat:IsA("Model") and boat.PrimaryPart then
-        rootPart = boat.PrimaryPart
-    elseif boat:IsA("BasePart") then
-        rootPart = boat
-    else
-        rootPart = boat:FindFirstChildWhichIsA("BasePart", true)
-    end
-
-    if not rootPart then
-        updateStatus("Tidak bisa gerak boat - tidak ada BasePart", Color3.fromRGB(220,80,80))
-        return false
-    end
-
-    -- Simpan offset player dari boat
-    local hrp    = getHRP()
-    local offset = hrp and (hrp.Position - rootPart.Position) or Vector3.new(0,5,0)
-
-    -- Pindahkan boat ke dekat island
-    if boat:IsA("Model") and boat.PrimaryPart then
-        boat:SetPrimaryPartCFrame(CFrame.new(ISLAND_BOAT_POS))
-    else
-        rootPart.CFrame = CFrame.new(ISLAND_BOAT_POS)
-    end
-
-    -- Pindahkan player juga supaya tidak terlempar
-    if hrp then
-        hrp.CFrame = CFrame.new(ISLAND_BOAT_POS + offset)
-    end
-
-    updateStatus("Boat dipindah ke dekat island!", Color3.fromRGB(100,200,140))
-    return true
-end
-
--- ================================================================
---  MOVEMENT — walk + auto noclip saat stuck
--- ================================================================
 local function runTo(target, timeout)
     local hu = getHum(); local h = getHRP()
     if not hu or not h then return false end
@@ -336,9 +204,7 @@ local function runTo(target, timeout)
 
     while elapsed < limit do
         task.wait(0.1); elapsed += 0.1
-        if not COLLECT_ON then
-            autoNoclipActive = false; return false
-        end
+        if not COLLECT_ON then autoNoclipActive = false; return false end
         local cur = getHRP(); if not cur then return false end
         local hu2 = getHum()
         if hu2 then
@@ -383,15 +249,11 @@ local function runTo(target, timeout)
         end
         lastPos = cur.Position
     end
-
     autoNoclipActive = false
     if not NOCLIP_ON then applyNoclip(false) end
     return false
 end
 
--- ================================================================
---  COLLECT NEARBY — khusus lobby
--- ================================================================
 local function collectNearby()
     if collected >= CFG.maxEvidence then return end
     local folder = getEvidenceFolder(); if not folder then return end
@@ -426,38 +288,26 @@ local function collectNearby()
     end
 end
 
--- ================================================================
---  AUTO COLLECT LOOP — lobby only, pakai WP_LOBBY
--- ================================================================
 local function runCollect()
     collected = 0
     updateCount(0)
     wpIdx = 1
-
-    -- Snap ke WP terdekat dulu
     local h0 = getHRP()
     if h0 then wpIdx = nearestWpIndex(WP_LOBBY, h0.Position) end
-
     updateStatus("Auto collect lobby aktif", Color3.fromRGB(120,160,220))
 
     while COLLECT_ON do
         if CLOSED then break end
-
         local h = getHRP()
         if not h then task.wait(0.5); continue end
 
-        -- Reset kalau sudah penuh
         if collected >= CFG.maxEvidence then
-            updateStatus("Penuh " .. collected .. "/8 — tunggu deposit manual", Color3.fromRGB(100,200,140))
+            updateStatus("Penuh " .. collected .. "/8 - tunggu deposit manual", Color3.fromRGB(100,200,140))
             task.wait(1); continue
         end
 
-        -- Loop WP
-        if wpIdx > #WP_LOBBY then
-            wpIdx = 1
-        end
+        if wpIdx > #WP_LOBBY then wpIdx = 1 end
 
-        -- Cari WP terdekat yang lebih maju — forward tracking
         local nearIdx = nearestWpIndex(WP_LOBBY, h.Position)
         if nearIdx > wpIdx then wpIdx = nearIdx end
 
@@ -467,10 +317,8 @@ local function runCollect()
 
         runTo(target, CFG.moveTimeout)
         if not COLLECT_ON then break end
-
         collectNearby()
         if not COLLECT_ON then break end
-
         wpIdx += 1
         task.wait(0.05)
     end
@@ -550,7 +398,6 @@ closeBtn.Font = Enum.Font.GothamBold; closeBtn.TextSize = 13; closeBtn.Text = "X
 closeBtn.AutoButtonColor = false; closeBtn.BorderSizePixel = 0; closeBtn.ZIndex = 5
 Instance.new("UICorner", closeBtn).CornerRadius = UDim.new(0,6)
 
--- Float
 local floatContainer = Instance.new("Frame", gui)
 floatContainer.Size = UDim2.new(0,44,0,44)
 floatContainer.Position = UDim2.new(0,14,0,14)
@@ -565,7 +412,6 @@ floatBtn.AutoButtonColor = false; floatBtn.BorderSizePixel = 0; floatBtn.ZIndex 
 Instance.new("UICorner", floatBtn).CornerRadius = UDim.new(0,10)
 Instance.new("UIStroke", floatBtn).Color = C.border
 
--- Status
 local statusBar = Instance.new("Frame", mainFrame)
 statusBar.Size = UDim2.new(1,-16,0,22); statusBar.Position = UDim2.new(0,8,0,50)
 statusBar.BackgroundColor3 = C.bg2; statusBar.BorderSizePixel = 0; statusBar.ZIndex = 3
@@ -577,7 +423,6 @@ statusTxt.BackgroundTransparency = 1; statusTxt.Text = "Ready"
 statusTxt.TextColor3 = C.dim; statusTxt.Font = Enum.Font.Gotham
 statusTxt.TextSize = 10; statusTxt.TextXAlignment = Enum.TextXAlignment.Left; statusTxt.ZIndex = 4
 
--- Info
 local infoRow = Instance.new("Frame", mainFrame)
 infoRow.Size = UDim2.new(1,-16,0,20); infoRow.Position = UDim2.new(0,8,0,76)
 infoRow.BackgroundTransparency = 1; infoRow.ZIndex = 3
@@ -592,7 +437,6 @@ local divLine = Instance.new("Frame", mainFrame)
 divLine.Size = UDim2.new(1,-16,0,1); divLine.Position = UDim2.new(0,8,0,100)
 divLine.BackgroundColor3 = C.border; divLine.BorderSizePixel = 0; divLine.ZIndex = 3
 
--- Toggle rows
 local ROW_H = 34; local ROW_GAP = 4; local ROW_Y = 108
 local function mkRow(label, icon, yPos)
     local row = Instance.new("Frame", mainFrame)
@@ -624,19 +468,19 @@ end
 
 local function rY(i) return ROW_Y + (i-1)*(ROW_H+ROW_GAP) end
 
-local hlPill,      hlBtn      = mkRow("Highlight",       "H",  rY(1))
-local spPill,      spBtn      = mkRow("Speed + Jump",    "S",  rY(2))
-local ncPill,      ncBtn      = mkRow("Noclip",          "N",  rY(3))
+local hlPill,      hlBtn      = mkRow("Highlight",        "H",  rY(1))
+local spPill,      spBtn      = mkRow("Speed + Jump",     "S",  rY(2))
+local ncPill,      ncBtn      = mkRow("Noclip",           "N",  rY(3))
 local collectPill, collectBtn = mkRow("Auto Collect Lobby","C", rY(4))
-local autoPill,    autoBtn    = mkRow("Auto Collect Scan","AC", rY(5))
-local babyPill,    babyBtn    = mkRow("Auto Baby",       "B",  rY(6))
+local autoPill,    autoBtn    = mkRow("Auto Collect Scan", "AC", rY(5))
+local babyPill,    babyBtn    = mkRow("Auto Baby",        "B",  rY(6))
 setPill(hlPill, true)
 
 local AY = rY(7)
-local function mkActBtn(txt, y, col)
+local function mkActBtn(txt, y)
     local b = Instance.new("TextButton", mainFrame)
     b.Size = UDim2.new(1,-16,0,30); b.Position = UDim2.new(0,8,0,y)
-    b.BackgroundColor3 = col or C.bg2; b.TextColor3 = C.accent
+    b.BackgroundColor3 = C.bg2; b.TextColor3 = C.accent
     b.Font = Enum.Font.Gotham; b.TextSize = 11; b.Text = txt
     b.AutoButtonColor = false; b.BorderSizePixel = 0; b.ZIndex = 3
     Instance.new("UICorner", b).CornerRadius = UDim.new(0,8)
@@ -645,199 +489,9 @@ local function mkActBtn(txt, y, col)
 end
 
 local tpBtn      = mkActBtn("Teleport ke Terdekat", AY)
-local boatBtn    = mkActBtn("Boat ke Island",        AY + 34, Color3.fromRGB(20,70,140))
-local respawnBtn = mkActBtn("Respawn",               AY + 68)
-mainFrame.Size   = UDim2.new(0, 260, 0, AY + 68 + 30 + 14)
+local respawnBtn = mkActBtn("Respawn",               AY + 34)
+mainFrame.Size   = UDim2.new(0, 260, 0, AY + 34 + 30 + 14)
 
 local hintTxt = Instance.new("TextLabel", mainFrame)
 hintTxt.Size = UDim2.new(1,-16,0,12); hintTxt.Position = UDim2.new(0,8,1,-14)
-hintTxt.BackgroundTransparency = 1; hintTxt.Text = "RightCtrl = hide/show"
-hintTxt.TextColor3 = Color3.fromRGB(35,35,45); hintTxt.Font = Enum.Font.Gotham
-hintTxt.TextSize = 9; hintTxt.TextXAlignment = Enum.TextXAlignment.Left; hintTxt.ZIndex = 3
-
--- Confirm
-local confirmFrame = Instance.new("Frame", gui)
-confirmFrame.Size = UDim2.new(0,220,0,100); confirmFrame.Position = UDim2.new(0.5,-110,0.5,-50)
-confirmFrame.BackgroundColor3 = C.bg1; confirmFrame.BorderSizePixel = 0
-confirmFrame.Visible = false; confirmFrame.ZIndex = 20
-Instance.new("UICorner", confirmFrame).CornerRadius = UDim.new(0,12)
-Instance.new("UIStroke", confirmFrame).Color = C.red
-
-local cTxt = Instance.new("TextLabel", confirmFrame)
-cTxt.Size = UDim2.new(1,-16,0,40); cTxt.Position = UDim2.new(0,8,0,10)
-cTxt.BackgroundTransparency = 1
-cTxt.Text = "Tutup semua fitur?\nWindow tidak bisa dibuka lagi."
-cTxt.TextColor3 = C.accent; cTxt.Font = Enum.Font.Gotham
-cTxt.TextSize = 11; cTxt.TextWrapped = true; cTxt.ZIndex = 21
-
-local cYes = Instance.new("TextButton", confirmFrame)
-cYes.Size = UDim2.new(0.45,0,0,26); cYes.Position = UDim2.new(0.05,0,0,60)
-cYes.BackgroundColor3 = Color3.fromRGB(40,12,12); cYes.TextColor3 = C.red
-cYes.Font = Enum.Font.GothamBold; cYes.TextSize = 11; cYes.Text = "Tutup"
-cYes.BorderSizePixel = 0; cYes.ZIndex = 22
-Instance.new("UICorner", cYes).CornerRadius = UDim.new(0,6)
-
-local cNo = Instance.new("TextButton", confirmFrame)
-cNo.Size = UDim2.new(0.45,0,0,26); cNo.Position = UDim2.new(0.5,0,0,60)
-cNo.BackgroundColor3 = C.bg2; cNo.TextColor3 = C.accent
-cNo.Font = Enum.Font.GothamBold; cNo.TextSize = 11; cNo.Text = "Batal"
-cNo.BorderSizePixel = 0; cNo.ZIndex = 22
-Instance.new("UICorner", cNo).CornerRadius = UDim.new(0,6)
-
--- ================================================================
---  UI UPDATERS
--- ================================================================
-function updateStatus(t, col)
-    statusTxt.Text       = t or ""
-    statusTxt.TextColor3 = col or C.dim
-end
-function updateCount(n)
-    evTxt.Text = "Evidence: " .. n .. "/" .. CFG.maxEvidence
-end
-
--- ================================================================
---  MINIMIZE / CLOSE
--- ================================================================
-local MINIMIZED = false
-local function setMin(v)
-    MINIMIZED = v
-    mainFrame.Visible      = not v
-    floatContainer.Visible = v
-end
-minBtn.MouseButton1Click:Connect(function() setMin(true) end)
-floatBtn.MouseButton1Click:Connect(function() setMin(false) end)
-
-local function shutdown()
-    CLOSED = true; COLLECT_ON = false; SPEED_ON = false
-    NOCLIP_ON = false; HL_ON = false; autoNoclipActive = false
-    applyNoclip(false); clearHighlights(); resetSpeed()
-    if speedConn  then speedConn:Disconnect()  end
-    if noclipConn then noclipConn:Disconnect() end
-    gui:Destroy()
-end
-closeBtn.MouseButton1Click:Connect(function() confirmFrame.Visible = true end)
-cYes.MouseButton1Click:Connect(function() confirmFrame.Visible = false; shutdown() end)
-cNo.MouseButton1Click:Connect(function() confirmFrame.Visible = false end)
-
-UserInputService.InputBegan:Connect(function(i, gp)
-    if not gp and i.KeyCode == Enum.KeyCode.RightControl and not CLOSED then
-        if MINIMIZED then setMin(false)
-        else mainFrame.Visible = not mainFrame.Visible end
-    end
-end)
-
--- ================================================================
---  TOGGLES
--- ================================================================
-hlBtn.MouseButton1Click:Connect(function()
-    HL_ON = not HL_ON; setPill(hlPill, HL_ON)
-    if not HL_ON then clearHighlights() end
-end)
-spBtn.MouseButton1Click:Connect(function()
-    SPEED_ON = not SPEED_ON; setPill(spPill, SPEED_ON)
-    if not SPEED_ON then resetSpeed() end
-end)
-ncBtn.MouseButton1Click:Connect(function()
-    NOCLIP_ON = not NOCLIP_ON; setPill(ncPill, NOCLIP_ON)
-    if not NOCLIP_ON and not autoNoclipActive then applyNoclip(false) end
-end)
-babyBtn.MouseButton1Click:Connect(function()
-    BABY_ON = not BABY_ON; setPill(babyPill, BABY_ON)
-end)
-autoBtn.MouseButton1Click:Connect(function()
-    AUTO_COLLECT = not AUTO_COLLECT; setPill(autoPill, AUTO_COLLECT)
-end)
-
--- Auto Collect Lobby toggle
-collectBtn.MouseButton1Click:Connect(function()
-    COLLECT_ON = not COLLECT_ON
-    setPill(collectPill, COLLECT_ON)
-    if COLLECT_ON then
-        collected = 0; updateCount(0)
-        task.spawn(runCollect)
-    else
-        updateStatus("Auto collect stop", C.dim)
-    end
-end)
-
--- Teleport ke terdekat
-tpBtn.MouseButton1Click:Connect(function()
-    if #foundModels == 0 then return end
-    local h = getHRP(); if not h then return end
-    local best, bestD = nil, math.huge
-    for _, m in ipairs(foundModels) do
-        local bp = m.PrimaryPart or m:FindFirstChildWhichIsA("BasePart", true)
-        if bp then
-            local d = (bp.Position - h.Position).Magnitude
-            if d < bestD then best = bp; bestD = d end
-        end
-    end
-    if best then h.CFrame = CFrame.new(best.Position + Vector3.new(0,4,0)) end
-end)
-
--- Boat ke island
-boatBtn.MouseButton1Click:Connect(function()
-    updateStatus("Mencari boat...", C.info)
-    moveBoatToIsland()
-end)
-
-respawnBtn.MouseButton1Click:Connect(doRespawn)
-
--- ================================================================
---  SCAN LOOP
--- ================================================================
-task.spawn(function()
-    while true do
-        task.wait(0.5)
-        if CLOSED then break end
-        local h = getHRP(); if not h or not h.Parent then task.wait(1); continue end
-        local folder = getEvidenceFolder(); if not folder then continue end
-
-        clearHighlights(); foundModels = {}
-        local nearest, bestD = nil, math.huge
-        for _, model in ipairs(folder:GetChildren()) do
-            local pr = getPromptFromModel(model)
-            if pr then
-                local bp = model.PrimaryPart or model:FindFirstChildWhichIsA("BasePart", true)
-                if bp then
-                    local d = (bp.Position - h.Position).Magnitude
-                    if d <= 15000 then
-                        table.insert(foundModels, model)
-                        if d < bestD then nearest = model; bestD = d end
-                        if AUTO_COLLECT and not COLLECT_ON then
-                            pcall(function() fireproximityprompt(pr) end)
-                        end
-                    end
-                end
-            end
-        end
-        if HL_ON then
-            for _, m in ipairs(foundModels) do addHighlight(m, m == nearest) end
-        end
-    end
-end)
-
--- ================================================================
---  RESPAWN
--- ================================================================
-LP.CharacterAdded:Connect(function(char)
-    task.wait(1.5)
-    if SPEED_ON then
-        local hum = char:FindFirstChildOfClass("Humanoid")
-        if hum then
-            hum.UseJumpPower = true
-            hum.WalkSpeed    = CFG.speed
-            hum.JumpPower    = CFG.jumpPower
-        end
-    end
-    if COLLECT_ON then
-        task.wait(1)
-        collected = 0; updateCount(0)
-        task.spawn(runCollect)
-    end
-end)
-
--- ================================================================
---  INIT
--- ================================================================
-updateStatus("Ready v12", C.ok)
+hintTxt.BackgroundTransparency = 1; hintTxt.Text = "RightCtrl = h
