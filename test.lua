@@ -4,7 +4,7 @@ local UserInputService  = game:GetService("UserInputService")
 
 local LP = Players.LocalPlayer
 
-local keywords = {"detective", "evidence", "deposit", "lobby", "facility", "collect", "badge", "reward", "case"}
+local keywords = {"detective", "evidence"}
 
 local function matchKeyword(str)
     if not str then return false end
