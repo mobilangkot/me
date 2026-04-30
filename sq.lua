@@ -59,8 +59,7 @@ local WP_LOBBY = {
 }
 
 local CFG = {
-    maxEvidence   = 8,
-    collectRadius = 35,
+    collectRadius = 40,
     wpReach       = 7,
     moveTimeout   = 10,
     speed         = 100,
@@ -75,26 +74,21 @@ local BABY_ON      = false
 local AUTO_COLLECT = false
 local CLOSED       = false
 
-local collected        = 0
 local wpIdx            = 1
 local autoNoclipActive = false
 local foundModels      = {}
 local highlights       = {}
 
--- Deklarasi awal agar bisa dipanggil sebelum GUI dibuat
+-- Forward declare UI refs
 local statusTxt
-local evTxt
 
 local function updateStatus(t, col)
     if not statusTxt then return end
     statusTxt.Text       = t or ""
     statusTxt.TextColor3 = col or Color3.fromRGB(90,90,100)
 end
-local function updateCount(n)
-    if not evTxt then return end
-    evTxt.Text = "Evidence: " .. n .. "/" .. CFG.maxEvidence
-end
 
+-- Speed
 local speedConn
 local function startSpeedLoop()
     if speedConn then speedConn:Disconnect() end
@@ -114,6 +108,7 @@ local function resetSpeed()
 end
 startSpeedLoop()
 
+-- Noclip
 local noclipConn
 local function applyNoclip(state)
     local c = LP.Character; if not c then return end
@@ -129,6 +124,7 @@ local function startNoclip()
 end
 startNoclip()
 
+-- Highlight
 local function clearHighlights()
     for _, h in ipairs(highlights) do pcall(function() h:Destroy() end) end
     highlights = {}
@@ -144,6 +140,7 @@ local function addHighlight(target, isNearest)
     table.insert(highlights, h)
 end
 
+-- Helpers
 local function getPromptFromModel(model)
     for _, d in ipairs(model:GetDescendants()) do
         if d:IsA("ProximityPrompt") then
@@ -179,6 +176,7 @@ local function doRespawn()
     if h then h.Health = 0 end
 end
 
+-- Auto Baby
 local function fireAllBaby()
     for _, obj in ipairs(workspace:GetDescendants()) do
         if obj:IsA("ProximityPrompt") and
@@ -200,6 +198,7 @@ if babyAction then
     end)
 end
 
+-- Movement
 local function runTo(target, timeout)
     local hu = getHum(); local h = getHRP()
     if not hu or not h then return false end
@@ -268,12 +267,12 @@ local function runTo(target, timeout)
     return false
 end
 
+-- Collect semua yang ada di sekitar, tanpa hitung, tanpa batas
 local function collectNearby()
-    if collected >= CFG.maxEvidence then return end
-    local folder = getEvidenceFolder(); if not folder then return end
+    local folder = getEvidenceFolder()
+    if not folder then return end
     local h = getHRP(); if not h then return end
 
-    local nearby = {}
     for _, model in ipairs(folder:GetChildren()) do
         local pr = getPromptFromModel(model)
         if pr then
@@ -281,30 +280,16 @@ local function collectNearby()
             if bp then
                 local d = (bp.Position - h.Position).Magnitude
                 if d <= CFG.collectRadius then
-                    table.insert(nearby, {prompt=pr, pos=bp.Position, d=d, name=model.Name})
+                    pcall(function() fireproximityprompt(pr) end)
+                    task.wait(0.1)
                 end
             end
         end
     end
-
-    if #nearby == 0 then return end
-    table.sort(nearby, function(a, b) return a.d < b.d end)
-
-    for _, ev in ipairs(nearby) do
-        if not COLLECT_ON then return end
-        if collected >= CFG.maxEvidence then break end
-        updateStatus("Collect: " .. ev.name, Color3.fromRGB(100,220,140))
-        pcall(function() fireproximityprompt(ev.prompt) end)
-        task.wait(0.2)
-        collected += 1
-        updateCount(collected)
-        task.wait(0.2)
-    end
 end
 
+-- Auto collect loop — jalan terus, collect terus, tidak peduli count
 local function runCollect()
-    collected = 0
-    updateCount(0)
     wpIdx = 1
     local h0 = getHRP()
     if h0 then wpIdx = nearestWpIndex(WP_LOBBY, h0.Position) end
@@ -315,24 +300,20 @@ local function runCollect()
         local h = getHRP()
         if not h then task.wait(0.5); continue end
 
-        if collected >= CFG.maxEvidence then
-            updateStatus("Penuh " .. collected .. "/8 - deposit manual", Color3.fromRGB(100,200,140))
-            task.wait(1); continue
-        end
-
         if wpIdx > #WP_LOBBY then wpIdx = 1 end
 
         local nearIdx = nearestWpIndex(WP_LOBBY, h.Position)
         if nearIdx > wpIdx then wpIdx = nearIdx end
 
-        local target = WP_LOBBY[wpIdx]
-        updateStatus(string.format("WP %d/%d  ev%d/8", wpIdx, #WP_LOBBY, collected),
+        updateStatus(string.format("WP %d/%d", wpIdx, #WP_LOBBY),
             Color3.fromRGB(120,160,220))
 
-        runTo(target, CFG.moveTimeout)
+        runTo(WP_LOBBY[wpIdx], CFG.moveTimeout)
         if not COLLECT_ON then break end
+
         collectNearby()
         if not COLLECT_ON then break end
+
         wpIdx += 1
         task.wait(0.05)
     end
@@ -361,7 +342,6 @@ local C = {
     info   = Color3.fromRGB(120, 160, 220),
     red    = Color3.fromRGB(200,  60,  60),
     green  = Color3.fromRGB( 60, 180,  80),
-    warn   = Color3.fromRGB(220, 160,  60),
 }
 
 local mainFrame = Instance.new("Frame", gui)
@@ -431,28 +411,17 @@ statusBar.Size = UDim2.new(1,-16,0,22); statusBar.Position = UDim2.new(0,8,0,50)
 statusBar.BackgroundColor3 = C.bg2; statusBar.BorderSizePixel = 0; statusBar.ZIndex = 3
 Instance.new("UICorner", statusBar).CornerRadius = UDim.new(0,6)
 
--- Assign ke variable yang sudah dideklarasi di atas
 statusTxt = Instance.new("TextLabel", statusBar)
 statusTxt.Size = UDim2.new(1,-10,1,0); statusTxt.Position = UDim2.new(0,8,0,0)
 statusTxt.BackgroundTransparency = 1; statusTxt.Text = "Ready"
 statusTxt.TextColor3 = C.dim; statusTxt.Font = Enum.Font.Gotham
 statusTxt.TextSize = 10; statusTxt.TextXAlignment = Enum.TextXAlignment.Left; statusTxt.ZIndex = 4
 
-local infoRow = Instance.new("Frame", mainFrame)
-infoRow.Size = UDim2.new(1,-16,0,20); infoRow.Position = UDim2.new(0,8,0,76)
-infoRow.BackgroundTransparency = 1; infoRow.ZIndex = 3
-
-evTxt = Instance.new("TextLabel", infoRow)
-evTxt.Size = UDim2.new(1,0,1,0); evTxt.BackgroundTransparency = 1
-evTxt.Text = "Evidence: 0/8"; evTxt.TextColor3 = C.ok
-evTxt.Font = Enum.Font.GothamBold; evTxt.TextSize = 10
-evTxt.TextXAlignment = Enum.TextXAlignment.Left; evTxt.ZIndex = 4
-
 local divLine = Instance.new("Frame", mainFrame)
-divLine.Size = UDim2.new(1,-16,0,1); divLine.Position = UDim2.new(0,8,0,100)
+divLine.Size = UDim2.new(1,-16,0,1); divLine.Position = UDim2.new(0,8,0,78)
 divLine.BackgroundColor3 = C.border; divLine.BorderSizePixel = 0; divLine.ZIndex = 3
 
-local ROW_H = 34; local ROW_GAP = 4; local ROW_Y = 108
+local ROW_H = 34; local ROW_GAP = 4; local ROW_Y = 86
 local function mkRow(label, icon, yPos)
     local row = Instance.new("Frame", mainFrame)
     row.Size = UDim2.new(1,-16,0,ROW_H); row.Position = UDim2.new(0,8,0,yPos)
@@ -541,9 +510,7 @@ cNo.Font = Enum.Font.GothamBold; cNo.TextSize = 11; cNo.Text = "Batal"
 cNo.BorderSizePixel = 0; cNo.ZIndex = 22
 Instance.new("UICorner", cNo).CornerRadius = UDim.new(0,6)
 
--- ================================================================
---  MINIMIZE / CLOSE
--- ================================================================
+-- Minimize / Close
 local MINIMIZED = false
 local function setMin(v)
     MINIMIZED = v
@@ -572,9 +539,7 @@ UserInputService.InputBegan:Connect(function(i, gp)
     end
 end)
 
--- ================================================================
---  TOGGLES
--- ================================================================
+-- Toggles
 hlBtn.MouseButton1Click:Connect(function()
     HL_ON = not HL_ON; setPill(hlPill, HL_ON)
     if not HL_ON then clearHighlights() end
@@ -597,7 +562,6 @@ collectBtn.MouseButton1Click:Connect(function()
     COLLECT_ON = not COLLECT_ON
     setPill(collectPill, COLLECT_ON)
     if COLLECT_ON then
-        collected = 0; updateCount(0)
         task.spawn(runCollect)
     else
         updateStatus("Auto collect stop", C.dim)
@@ -618,9 +582,7 @@ tpBtn.MouseButton1Click:Connect(function()
 end)
 respawnBtn.MouseButton1Click:Connect(doRespawn)
 
--- ================================================================
---  SCAN LOOP
--- ================================================================
+-- Scan loop
 task.spawn(function()
     while true do
         task.wait(0.5)
@@ -652,9 +614,7 @@ task.spawn(function()
     end
 end)
 
--- ================================================================
---  RESPAWN
--- ================================================================
+-- Respawn
 LP.CharacterAdded:Connect(function(char)
     task.wait(1.5)
     if SPEED_ON then
@@ -667,7 +627,6 @@ LP.CharacterAdded:Connect(function(char)
     end
     if COLLECT_ON then
         task.wait(1)
-        collected = 0; updateCount(0)
         task.spawn(runCollect)
     end
 end)
