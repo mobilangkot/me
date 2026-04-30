@@ -19,13 +19,14 @@ end
 
 local CFG = {
     maxEvidence  = 8,
-    minCycleTime = 30,  -- minimum detik per siklus
+    minCycleTime = 30,
     speed        = 100,
     jumpPower    = 70,
-    liftWait     = 8,   -- tunggu setelah klik lift
-    depositWait  = 2,   -- tunggu setelah deposit
-    collectDelay = 0.3, -- delay antar collect
-    tpDelay      = 0.2, -- delay setelah teleport
+    liftWait     = 8,
+    depositWait  = 2,
+    collectDelay = 3,   -- jeda antar collect (ganti dari 0.3 ke 3)
+    tpDelay      = 0.2,
+    preDepositWait = 15, -- tunggu sebelum deposit (tambah ini)
 }
 
 local AI_ON        = false
@@ -623,19 +624,29 @@ local function runAI()
         -- ════════════════════════════════
         --  STEP 4: TP ke Deposit Evidence + klik
         -- ════════════════════════════════
-        updateStatus("Step 4: Cari Deposit Evidence...", C.info)
-        local depPr, depPos = findPromptByText("Deposit Evidence")
-        if not depPr then
-            updateStatus("Deposit prompt tidak ditemukan, tunggu...", C.warn)
-            task.wait(3)
-        else
-            tpTo(depPos)
-            updateStatus("Deposit " .. collected .. " evidence...", C.ok)
-            task.wait(0.3)
-            firePrompt(depPr)
-            task.wait(CFG.depositWait)
-            updateStatus("Deposit selesai!", C.ok)
-        end
+      -- STEP 4: TP ke Deposit Evidence + klik
+updateStatus("Step 4: Cari Deposit Evidence...", C.info)
+local depPr, depPos = findPromptByText("Deposit Evidence")
+if not depPr then
+    updateStatus("Deposit prompt tidak ditemukan, tunggu...", C.warn)
+    task.wait(3)
+else
+    tpTo(depPos)
+
+    -- Tunggu 15 detik dulu sebelum deposit
+    updateStatus("Menunggu 15 detik sebelum deposit...", C.warn)
+    local waitEnd = tick() + CFG.preDepositWait
+    while tick() < waitEnd and AI_ON do
+        updateTimer(waitEnd - tick())
+        task.wait(0.5)
+    end
+
+    updateStatus("Deposit " .. collected .. " evidence...", C.ok)
+    task.wait(0.3)
+    firePrompt(depPr)
+    task.wait(CFG.depositWait)
+    updateStatus("Deposit selesai!", C.ok)
+end
 
         if not AI_ON then break end
 
