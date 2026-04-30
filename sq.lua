@@ -200,7 +200,7 @@ local CFG = {
     maxEvidence   = 8,
     -- [FIX KASUS 2] collectRadius diperkecil agar sesuai jangkauan nyata
     -- prompt di game (4 stud), tapi sedikit lebih besar untuk buffer
-    collectRadius = 8,
+    collectRadius = 15,
     promptReach   = 6,
     wpReach       = 7,
     moveTimeout   = 14,
