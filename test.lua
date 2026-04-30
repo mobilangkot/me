@@ -11,9 +11,6 @@ local function matchKW(str)
         or string.find(s, "evidence")  ~= nil
 end
 
--- =============================================
--- GUI
--- =============================================
 local gui = Instance.new("ScreenGui", LP:WaitForChild("PlayerGui"))
 gui.Name = "DetEvDebug"; gui.ResetOnSpawn = false
 
@@ -74,9 +71,9 @@ local function makeBtn(text, x, w, col)
     return b
 end
 
-local btnScan  = makeBtn("🔍 Scan Semua",  8,   130, Color3.fromRGB(20,80,180))
-local btnClear = makeBtn("🗑 Clear",        144, 80,  Color3.fromRGB(140,25,25))
-local btnRescan= makeBtn("🔄 Rescan",       230, 80,  Color3.fromRGB(60,100,40))
+local btnScan  = makeBtn("🔍 Scan Semua", 8,   130, Color3.fromRGB(20,80,180))
+local btnClear = makeBtn("🗑 Clear",       144, 80,  Color3.fromRGB(140,25,25))
+local btnRescan= makeBtn("🔄 Rescan",      230, 80,  Color3.fromRGB(60,100,40))
 
 local scroll = Instance.new("ScrollingFrame", frame)
 scroll.Position            = UDim2.new(0, 8, 0, 100)
@@ -104,9 +101,6 @@ UserInputService.InputBegan:Connect(function(input, gp)
     end
 end)
 
--- =============================================
--- Log system
--- =============================================
 local logLines = {}
 local order    = 0
 
@@ -153,17 +147,16 @@ local function clearLog()
     logLines = {}; order = 0
 end
 
--- =============================================
--- Print SEMUA properti dari object yang match
--- =============================================
+local valueClasses = {
+    "StringValue","IntValue","NumberValue","BoolValue",
+    "Color3Value","Vector3Value","ObjectValue","CFrameValue"
+}
+
 local function printAllProps(obj, indent)
     local ind = indent or "  "
 
-    -- Path
     log(ind .. "📍 " .. obj:GetFullName(), C.path)
-
-    -- ClassName
-    log(ind .. "ClassName: " .. obj.ClassName, C.grey)
+    log(ind .. "class: " .. obj.ClassName, C.grey)
 
     -- Attributes
     local okA, attrs = pcall(function() return obj:GetAttributes() end)
@@ -176,11 +169,7 @@ local function printAllProps(obj, indent)
         if not any then log(ind .. "(attributes kosong)", C.grey) end
     end
 
-    -- Value-type: .Value
-    local valueClasses = {
-        "StringValue","IntValue","NumberValue","BoolValue",
-        "Color3Value","Vector3Value","ObjectValue","CFrameValue"
-    }
+    -- .Value
     for _, vc in ipairs(valueClasses) do
         if obj.ClassName == vc then
             local okV, val = pcall(function() return obj.Value end)
@@ -190,12 +179,11 @@ local function printAllProps(obj, indent)
         end
     end
 
-    -- ProximityPrompt props
+    -- ProximityPrompt
     if obj.ClassName == "ProximityPrompt" then
         local ppProps = {
             "ActionText","ObjectText","MaxActivationDistance",
-            "Enabled","HoldDuration","RequiresLineOfSight",
-            "KeyboardKeyCode","GamepadKeyCode"
+            "Enabled","HoldDuration","RequiresLineOfSight"
         }
         for _, p in ipairs(ppProps) do
             local ok2, v = pcall(function() return obj[p] end)
@@ -205,43 +193,43 @@ local function printAllProps(obj, indent)
         end
     end
 
-    -- Remote props
+    -- Remote
     if obj.ClassName:find("Remote") or obj.ClassName:find("Bindable") then
         local col = obj.ClassName:find("Remote") and C.remote or C.bindable
-        log(ind .. "📡 type: " .. obj.ClassName, col)
+        log(ind .. "📡 " .. obj.ClassName .. " → " .. obj:GetFullName(), col)
     end
 
-    -- TextLabel/TextButton/TextBox — baca .Text
-    local textProps = {"Text","PlaceholderText","Value"}
+    -- Text props
+    local textProps = {"Text", "PlaceholderText"}
     for _, p in ipairs(textProps) do
         local ok3, v = pcall(function() return obj[p] end)
         if ok3 and type(v) == "string" and #v > 0 then
-            if matchKW(v) then
-                log(ind .. "⭐ ." .. p .. ' = "' .. v .. '"', C.match)
-            else
-                log(ind .. "  ." .. p .. ' = "' .. v:sub(1,80) .. '"', C.prop)
-            end
+            local col = matchKW(v) and C.match or C.prop
+            local tag = matchKW(v) and "⭐ " or "  "
+            log(ind .. tag .. "." .. p .. ' = "' .. v:sub(1, 100) .. '"', col)
         end
     end
 
-    -- Children yang juga punya data (Value objects, folder, dll)
+    -- Children data
     local okC, children = pcall(function() return obj:GetChildren() end)
     if okC then
         for _, child in ipairs(children) do
             local cn = child.ClassName
-            local isDataObj = cn:find("Value") or cn == "Folder"
-                           or cn:find("Remote") or cn:find("Bindable")
-                           or cn == "ProximityPrompt"
-            if isDataObj or matchKW(child.Name) then
+            local isData = false
+            for _, vc in ipairs(valueClasses) do
+                if cn == vc then isData = true; break end
+            end
+            if isData or cn:find("Remote") or cn:find("Bindable")
+            or cn == "ProximityPrompt" or matchKW(child.Name) then
                 log(ind .. "  └─ [" .. cn .. "] " .. child.Name, C.grey)
-                -- Attributes child
+
                 local okCA, cattrs = pcall(function() return child:GetAttributes() end)
                 if okCA then
                     for k, v in pairs(cattrs) do
                         log(ind .. "      🔴 " .. k .. " = " .. tostring(v), C.attr)
                     end
                 end
-                -- Value child
+
                 for _, vc in ipairs(valueClasses) do
                     if child.ClassName == vc then
                         local okV2, val2 = pcall(function() return child.Value end)
@@ -250,14 +238,17 @@ local function printAllProps(obj, indent)
                         end
                     end
                 end
+
+                local okT2, tv = pcall(function() return child.Text end)
+                if okT2 and type(tv) == "string" and #tv > 0 then
+                    local col2 = matchKW(tv) and C.match or C.prop
+                    log(ind .. '      .Text = "' .. tv:sub(1,80) .. '"', col2)
+                end
             end
         end
     end
 end
 
--- =============================================
--- Rekursif scan satu root
--- =============================================
 local totalFound = 0
 
 local function deepScan(root, maxDepth)
@@ -265,34 +256,29 @@ local function deepScan(root, maxDepth)
 
     local function walk(obj, depth)
         if depth > maxDepth then return end
-        if not obj or not obj.Parent then return end
+        if not obj then return end
 
         local nameMatch = matchKW(obj.Name)
 
-        -- Cek .Text kalau ada
         local textMatch = false
         local okT, textVal = pcall(function() return obj.Text end)
         if okT and type(textVal) == "string" then
             textMatch = matchKW(textVal)
         end
 
-        -- Cek Value kalau ada
         local valMatch = false
         local okVV, valVal = pcall(function() return obj.Value end)
-        if okVVand type(valVal) == "string" then
+        if okVV and type(valVal) == "string" then
             valMatch = matchKW(valVal)
         end
 
         if nameMatch or textMatch or valMatch then
             totalFound += 1
-            local tag = "⭐"
-            if textMatch and not nameMatch then tag = "📝" end
-            if valMatch  and not nameMatch then tag = "💾" end
+            local tag = nameMatch and "⭐" or (textMatch and "📝" or "💾")
             div(tag .. " [" .. obj.ClassName .. "]  " .. obj.Name)
             printAllProps(obj, "  ")
         end
 
-        -- Rekursif
         local okC, ch = pcall(function() return obj:GetChildren() end)
         if okC then
             for _, c in ipairs(ch) do
@@ -304,93 +290,62 @@ local function deepScan(root, maxDepth)
     walk(root, 0)
 end
 
--- =============================================
--- Scan semua lokasi
--- =============================================
 local function doScanAll()
     clearLog()
     totalFound = 0
     countLbl.Text = "⏳ Scanning..."
-    log("🔍 Scan: detective / evidence di semua lokasi", C.match)
-    log("⭐ = nama match  |  📝 = teks match  |  💾 = value match", C.grey)
+    log("🔍 Keyword: detective | evidence", C.match)
+    log("⭐=nama  📝=teks  💾=value", C.grey)
     div()
 
-    -- 1. Workspace
-    log("", C.grey)
-    log("═══ WORKSPACE ═══", C.header)
-    deepScan(workspace, 12)
+    local sources = {
+        { name = "WORKSPACE",          fn = function() deepScan(workspace, 12) end },
+        { name = "REPLICATED STORAGE", fn = function() deepScan(ReplicatedStorage, 12) end },
+        { name = "PLAYER GUI",         fn = function()
+            local pg = LP:FindFirstChild("PlayerGui")
+            if pg then deepScan(pg, 12) end
+        end },
+        { name = "BACKPACK",           fn = function()
+            local bp = LP:FindFirstChild("Backpack")
+            if bp then deepScan(bp, 8) end
+        end },
+        { name = "CHARACTER",          fn = function()
+            local char = LP.Character
+            if char then deepScan(char, 8) end
+        end },
+        { name = "PLAYER OBJECT",      fn = function() deepScan(LP, 8) end },
+        { name = "TEAMS",              fn = function()
+            pcall(function()
+                local tm = game:GetService("Teams")
+                if tm then deepScan(tm, 6) end
+            end)
+        end },
+    }
 
-    -- 2. ReplicatedStorage
-    log("", C.grey)
-    log("═══ REPLICATED STORAGE ═══", C.header)
-    deepScan(ReplicatedStorage, 12)
-
-    -- 3. PlayerGui
-    log("", C.grey)
-    log("═══ PLAYER GUI ═══", C.header)
-    local pgui = LP:FindFirstChild("PlayerGui")
-    if pgui then deepScan(pgui, 12) end
-
-    -- 4. Backpack
-    log("", C.grey)
-    log("═══ BACKPACK ═══", C.header)
-    local bp = LP:FindFirstChild("Backpack")
-    if bp then deepScan(bp, 8) end
-
-    -- 5. Character
-    log("", C.grey)
-    log("═══ CHARACTER ═══", C.header)
-    local char = LP.Character
-    if char then deepScan(char, 8) end
-
-    -- 6. Player object sendiri
-    log("", C.grey)
-    log("═══ PLAYER OBJECT ═══", C.header)
-    deepScan(LP, 8)
-
-    -- 7. StarterGui (script/frame mungkin ada di sini)
-    log("", C.grey)
-    log("═══ STARTER GUI ═══", C.header)
-    pcall(function()
-        local sg = game:GetService("StarterGui")
-        if sg then deepScan(sg, 8) end
-    end)
-
-    -- 8. Teams (kadang ada data di sini)
-    log("", C.grey)
-    log("═══ TEAMS ═══", C.header)
-    pcall(function()
-        local tm = game:GetService("Teams")
-        if tm then deepScan(tm, 6) end
-    end)
+    for _, src in ipairs(sources) do
+        log("", C.grey)
+        log("═══ " .. src.name .. " ═══", C.header)
+        local before = totalFound
+        src.fn()
+        local found = totalFound - before
+        if found == 0 then
+            log("  (tidak ada match)", C.grey)
+        end
+    end
 
     div()
-    local msg = "✅ Scan selesai — " .. totalFound .. " object match ditemukan"
+    local msg = "✅ Selesai — " .. totalFound .. " match ditemukan"
     log(msg, C.match)
     countLbl.Text = msg
 end
 
--- =============================================
--- Buttons
--- =============================================
-btnScan.MouseButton1Click:Connect(function()
-    task.spawn(doScanAll)
-end)
-
-btnRescan.MouseButton1Click:Connect(function()
-    task.spawn(doScanAll)
-end)
-
+btnScan.MouseButton1Click:Connect(function()  task.spawn(doScanAll) end)
+btnRescan.MouseButton1Click:Connect(function() task.spawn(doScanAll) end)
 btnClear.MouseButton1Click:Connect(function()
-    clearLog()
-    totalFound = 0
+    clearLog(); totalFound = 0
     countLbl.Text = "Log dibersihkan"
     log("🗑 cleared", C.grey)
 end)
 
--- Auto scan saat load
-task.delay(1, function()
-    task.spawn(doScanAll)
-end)
-
+task.delay(1, function() task.spawn(doScanAll) end)
 log("🟢 Auto scan dalam 1 detik...", C.match)
