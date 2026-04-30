@@ -1,423 +1,329 @@
-local Players           = game:GetService("Players")
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local UserInputService  = game:GetService("UserInputService")
-local LP                = Players.LocalPlayer
+local LP  = game:GetService("Players").LocalPlayer
+local RS  = game:GetService("ReplicatedStorage")
+local UIS = game:GetService("UserInputService")
 
-local function matchKW(str)
-    if not str then return false end
-    local s = string.lower(tostring(str))
-    return string.find(s, "detective") ~= nil
-        or string.find(s, "evidence")  ~= nil
+local function isMatch(s)
+    if not s then return false end
+    s = string.lower(tostring(s))
+    return s:find("detective") or s:find("evidence")
 end
 
 -- GUI
 local gui = Instance.new("ScreenGui", LP:WaitForChild("PlayerGui"))
-gui.Name = "DetEvDebug"
+gui.Name = "DebugScan"
 gui.ResetOnSpawn = false
 
 local frame = Instance.new("Frame", gui)
-frame.Size             = UDim2.new(0, 520, 0, 580)
+frame.Size             = UDim2.new(0, 500, 0, 560)
 frame.Position         = UDim2.new(0, 10, 0, 10)
 frame.BackgroundColor3 = Color3.fromRGB(10, 10, 14)
 frame.BorderSizePixel  = 0
 frame.Active           = true
 frame.Draggable        = true
-Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 10)
+Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 8)
 
-local titleBar = Instance.new("Frame", frame)
-titleBar.Size             = UDim2.new(1, 0, 0, 34)
-titleBar.BackgroundColor3 = Color3.fromRGB(16, 16, 22)
-titleBar.BorderSizePixel  = 0
-Instance.new("UICorner", titleBar).CornerRadius = UDim.new(0, 10)
+local topBar = Instance.new("Frame", frame)
+topBar.Size             = UDim2.new(1, 0, 0, 32)
+topBar.BackgroundColor3 = Color3.fromRGB(18, 18, 26)
+topBar.BorderSizePixel  = 0
+Instance.new("UICorner", topBar).CornerRadius = UDim.new(0, 8)
 
-local titleLbl = Instance.new("TextLabel", titleBar)
-titleLbl.Size               = UDim2.new(1, -12, 1, 0)
-titleLbl.Position           = UDim2.new(0, 12, 0, 0)
-titleLbl.BackgroundTransparency = 1
-titleLbl.TextColor3         = Color3.fromRGB(255, 255, 255)
-titleLbl.Font               = Enum.Font.GothamBold
-titleLbl.TextSize           = 13
-titleLbl.TextXAlignment     = Enum.TextXAlignment.Left
-titleLbl.Text               = "Detective / Evidence — Full Debug"
+local topLbl = Instance.new("TextLabel", topBar)
+topLbl.Size               = UDim2.new(1, -10, 1, 0)
+topLbl.Position           = UDim2.new(0, 10, 0, 0)
+topLbl.BackgroundTransparency = 1
+topLbl.TextColor3         = Color3.fromRGB(255, 255, 255)
+topLbl.Font               = Enum.Font.GothamBold
+topLbl.TextSize            = 12
+topLbl.TextXAlignment     = Enum.TextXAlignment.Left
+topLbl.Text               = "Detective / Evidence Debug Scanner"
 
-local countBar = Instance.new("Frame", frame)
-countBar.Size             = UDim2.new(1, -16, 0, 22)
-countBar.Position         = UDim2.new(0, 8, 0, 40)
-countBar.BackgroundColor3 = Color3.fromRGB(16, 16, 22)
-countBar.BorderSizePixel  = 0
-Instance.new("UICorner", countBar).CornerRadius = UDim.new(0, 6)
+local statusLbl = Instance.new("TextLabel", frame)
+statusLbl.Size               = UDim2.new(1, -16, 0, 20)
+statusLbl.Position           = UDim2.new(0, 8, 0, 36)
+statusLbl.BackgroundTransparency = 1
+statusLbl.TextColor3         = Color3.fromRGB(100, 200, 255)
+statusLbl.Font               = Enum.Font.Gotham
+statusLbl.TextSize            = 11
+statusLbl.TextXAlignment     = Enum.TextXAlignment.Left
+statusLbl.Text               = "Tekan Scan"
 
-local countLbl = Instance.new("TextLabel", countBar)
-countLbl.Size               = UDim2.new(1, -10, 1, 0)
-countLbl.Position           = UDim2.new(0, 8, 0, 0)
-countLbl.BackgroundTransparency = 1
-countLbl.TextColor3         = Color3.fromRGB(100, 200, 255)
-countLbl.Font               = Enum.Font.Gotham
-countLbl.TextSize           = 11
-countLbl.TextXAlignment     = Enum.TextXAlignment.Left
-countLbl.Text               = "Belum scan"
-
-local function makeBtn(text, x, w, col)
+local function mkBtn(txt, px, pw, col)
     local b = Instance.new("TextButton", frame)
-    b.Position         = UDim2.new(0, x, 0, 68)
-    b.Size             = UDim2.new(0, w, 0, 26)
+    b.Position         = UDim2.new(0, px, 0, 60)
+    b.Size             = UDim2.new(0, pw, 0, 24)
     b.BackgroundColor3 = col
-    b.TextColor3       = Color3.new(1, 1, 1)
+    b.TextColor3       = Color3.new(1,1,1)
     b.Font             = Enum.Font.GothamBold
     b.TextSize         = 11
-    b.Text             = text
+    b.Text             = txt
     b.AutoButtonColor  = false
     b.BorderSizePixel  = 0
-    Instance.new("UICorner", b).CornerRadius = UDim.new(0, 6)
+    Instance.new("UICorner", b).CornerRadius = UDim.new(0, 5)
     return b
 end
 
-local btnScan  = makeBtn("Scan Semua", 8,   120, Color3.fromRGB(20, 80, 180))
-local btnClear = makeBtn("Clear",      134, 70,  Color3.fromRGB(140, 25, 25))
-local btnRescan= makeBtn("Rescan",     210, 70,  Color3.fromRGB(40, 100, 40))
+local btnScan  = mkBtn("SCAN",  8,   80, Color3.fromRGB(20, 80, 180))
+local btnClear = mkBtn("CLEAR", 94,  70, Color3.fromRGB(140, 25, 25))
 
 local scroll = Instance.new("ScrollingFrame", frame)
-scroll.Position             = UDim2.new(0, 8, 0, 100)
-scroll.Size                 = UDim2.new(1, -16, 1, -108)
-scroll.BackgroundColor3     = Color3.fromRGB(8, 8, 12)
-scroll.BorderSizePixel      = 0
-scroll.ScrollBarThickness   = 4
-scroll.ScrollBarImageColor3 = Color3.fromRGB(80, 140, 255)
-scroll.AutomaticCanvasSize  = Enum.AutomaticSize.Y
-scroll.CanvasSize           = UDim2.new(0, 0, 0, 0)
-Instance.new("UICorner", scroll).CornerRadius = UDim.new(0, 7)
+scroll.Position            = UDim2.new(0, 8, 0, 90)
+scroll.Size                = UDim2.new(1, -16, 1, -98)
+scroll.BackgroundColor3    = Color3.fromRGB(8, 8, 12)
+scroll.BorderSizePixel     = 0
+scroll.ScrollBarThickness  = 4
+scroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
+scroll.CanvasSize          = UDim2.new(0, 0, 0, 0)
+Instance.new("UICorner", scroll).CornerRadius = UDim.new(0, 6)
 
-local layout = Instance.new("UIListLayout", scroll)
-layout.SortOrder = Enum.SortOrder.LayoutOrder
-layout.Padding   = UDim.new(0, 1)
+local list = Instance.new("UIListLayout", scroll)
+list.SortOrder = Enum.SortOrder.LayoutOrder
+list.Padding   = UDim.new(0, 1)
 
-local scrollPad = Instance.new("UIPadding", scroll)
-scrollPad.PaddingLeft  = UDim.new(0, 5)
-scrollPad.PaddingTop   = UDim.new(0, 4)
-scrollPad.PaddingRight = UDim.new(0, 5)
+local lpad = Instance.new("UIPadding", scroll)
+lpad.PaddingLeft  = UDim.new(0, 4)
+lpad.PaddingTop   = UDim.new(0, 3)
+lpad.PaddingRight = UDim.new(0, 4)
 
-UserInputService.InputBegan:Connect(function(input, gp)
-    if not gp and input.KeyCode == Enum.KeyCode.RightControl then
+UIS.InputBegan:Connect(function(i, gp)
+    if not gp and i.KeyCode == Enum.KeyCode.RightControl then
         gui.Enabled = not gui.Enabled
     end
 end)
 
--- Log system
-local logLines = {}
-local order    = 0
+-- Log
+local lines = {}
+local n     = 0
 
-local C = {
-    header  = Color3.fromRGB(255, 200, 60),
-    match   = Color3.fromRGB(255, 80,  255),
-    remote  = Color3.fromRGB(80,  200, 255),
-    prompt  = Color3.fromRGB(80,  255, 140),
-    value   = Color3.fromRGB(255, 220, 80),
-    attr    = Color3.fromRGB(255, 120, 100),
-    prop    = Color3.fromRGB(180, 180, 200),
-    path    = Color3.fromRGB(90,  90,  110),
-    div     = Color3.fromRGB(28,  28,  42),
-    grey    = Color3.fromRGB(100, 100, 120),
-    white   = Color3.fromRGB(200, 200, 200),
-}
-
-local function log(text, color)
-    order += 1
+local function addLine(txt, col)
+    n += 1
     local l = Instance.new("TextLabel", scroll)
-    l.Size               = UDim2.new(1, -4, 0, 0)
+    l.Size               = UDim2.new(1, 0, 0, 0)
     l.AutomaticSize      = Enum.AutomaticSize.Y
     l.BackgroundTransparency = 1
-    l.TextColor3         = color or C.white
+    l.TextColor3         = col or Color3.fromRGB(200, 200, 200)
     l.Font               = Enum.Font.Code
     l.TextSize           = 11
     l.TextWrapped        = true
     l.TextXAlignment     = Enum.TextXAlignment.Left
-    l.Text               = text
-    l.LayoutOrder        = order
-    task.defer(function()
-        scroll.CanvasPosition = Vector2.new(0, math.huge)
-    end)
-    table.insert(logLines, l)
-    if #logLines > 800 then
-        table.remove(logLines, 1):Destroy()
-    end
+    l.Text               = txt
+    l.LayoutOrder        = n
+    task.defer(function() scroll.CanvasPosition = Vector2.new(0, 9e9) end)
+    table.insert(lines, l)
+    if #lines > 600 then table.remove(lines, 1):Destroy() end
 end
 
-local function divider(text)
-    local t = text or ""
-    log("-- " .. t .. " " .. string.rep("-", math.max(0, 46 - #t)), C.div)
+local function hr(lbl)
+    addLine("--- " .. (lbl or "") .. " " .. string.rep("-", math.max(0, 44 - #(lbl or ""))),
+        Color3.fromRGB(30, 30, 45))
 end
 
-local function clearLog()
-    for _, l in ipairs(logLines) do
-        pcall(function() l:Destroy() end)
-    end
-    logLines = {}
-    order    = 0
+local function wipe()
+    for _, l in ipairs(lines) do pcall(function() l:Destroy() end) end
+    lines = {}
+    n     = 0
 end
 
--- Value classes
-local VALUE_CLASSES = {
-    StringValue  = true,
-    IntValue     = true,
-    NumberValue  = true,
-    BoolValue    = true,
-    Color3Value  = true,
-    Vector3Value = true,
-    ObjectValue  = true,
-    CFrameValue  = true,
+-- Warna
+local cMatch  = Color3.fromRGB(255, 80,  255)
+local cAttr   = Color3.fromRGB(255, 130, 100)
+local cVal    = Color3.fromRGB(255, 220, 80)
+local cPath   = Color3.fromRGB(90,  90,  110)
+local cProp   = Color3.fromRGB(180, 180, 200)
+local cRemote = Color3.fromRGB(80,  200, 255)
+local cPrompt = Color3.fromRGB(80,  255, 140)
+local cGrey   = Color3.fromRGB(100, 100, 120)
+local cHead   = Color3.fromRGB(255, 200, 60)
+
+local VALUE_CLS = {
+    StringValue=1, IntValue=1, NumberValue=1, BoolValue=1,
+    Color3Value=1, Vector3Value=1, ObjectValue=1, CFrameValue=1
 }
 
--- Print detail satu object
-local function printDetail(obj, indent)
-    local ind = indent or "  "
+-- Print detail object
+local function detail(obj, ind)
+    ind = ind or "  "
 
-    -- Full path
-    log(ind .. "path: " .. obj:GetFullName(), C.path)
-    log(ind .. "class: " .. obj.ClassName,    C.grey)
+    addLine(ind .. "path  : " .. obj:GetFullName(), cPath)
+    addLine(ind .. "class : " .. obj.ClassName, cGrey)
 
     -- Attributes
-    local okA, attrs = pcall(function() return obj:GetAttributes() end)
-    if okA then
-        local hasAttr = false
+    local ok1, attrs = pcall(function() return obj:GetAttributes() end)
+    if ok1 then
         for k, v in pairs(attrs) do
-            hasAttr = true
-            local col = matchKW(k) and C.match or C.attr
-            log(ind .. "[ATTR] " .. k .. " = " .. tostring(v), col)
-        end
-        if not hasAttr then
-            log(ind .. "(no attributes)", C.grey)
+            local c = isMatch(k) and cMatch or cAttr
+            addLine(ind .. "[attr] " .. k .. " = " .. tostring(v), c)
         end
     end
 
-    -- .Value untuk value objects
-    if VALUE_CLASSES[obj.ClassName] then
-        local okV, val = pcall(function() return obj.Value end)
-        if okV then
-            local col = matchKW(tostring(val)) and C.match or C.value
-            log(ind .. "[VALUE] = " .. tostring(val), col)
+    -- .Value
+    if VALUE_CLS[obj.ClassName] then
+        local ok2, v = pcall(function() return obj.Value end)
+        if ok2 then
+            local c = isMatch(tostring(v)) and cMatch or cVal
+            addLine(ind .. "[.Value] = " .. tostring(v), c)
         end
     end
 
     -- ProximityPrompt
     if obj.ClassName == "ProximityPrompt" then
-        local props = {
-            "ActionText", "ObjectText", "MaxActivationDistance",
-            "Enabled", "HoldDuration", "RequiresLineOfSight"
-        }
-        for _, p in ipairs(props) do
-            local ok2, v = pcall(function() return obj[p] end)
-            if ok2 then
-                local col = matchKW(tostring(v)) and C.match or C.prompt
-                log(ind .. "[PP] " .. p .. " = " .. tostring(v), col)
+        local pp = {"ActionText","ObjectText","MaxActivationDistance","Enabled","HoldDuration","RequiresLineOfSight"}
+        for _, p in ipairs(pp) do
+            local ok3, v = pcall(function() return obj[p] end)
+            if ok3 then
+                local c = isMatch(tostring(v)) and cMatch or cPrompt
+                addLine(ind .. "[pp] " .. p .. " = " .. tostring(v), c)
             end
         end
     end
 
     -- Remote/Bindable
     if obj.ClassName:find("Remote") or obj.ClassName:find("Bindable") then
-        log(ind .. "[REMOTE] " .. obj.ClassName, C.remote)
+        addLine(ind .. "[remote] " .. obj.ClassName, cRemote)
     end
 
-    -- Text property
-    local okT, textVal = pcall(function() return obj.Text end)
-    if okT and type(textVal) == "string" and #textVal > 0 then
-        local col = matchKW(textVal) and C.match or C.prop
-        log(ind .. "[TEXT] = \"" .. textVal:sub(1, 120) .. "\"", col)
+    -- .Text
+    local ok4, tv = pcall(function() return obj.Text end)
+    if ok4 and type(tv) == "string" and #tv > 0 then
+        local c = isMatch(tv) and cMatch or cProp
+        addLine(ind .. "[.Text] = \"" .. tv:sub(1, 100) .. "\"", c)
     end
 
-    -- PlaceholderText
-    local okPH, phVal = pcall(function() return obj.PlaceholderText end)
-    if okPH and type(phVal) == "string" and #phVal > 0 then
-        local col = matchKW(phVal) and C.match or C.prop
-        log(ind .. "[PLACEHOLDER] = \"" .. phVal:sub(1, 120) .. "\"", col)
+    -- .PlaceholderText
+    local ok5, pv = pcall(function() return obj.PlaceholderText end)
+    if ok5 and type(pv) == "string" and #pv > 0 then
+        local c = isMatch(pv) and cMatch or cProp
+        addLine(ind .. "[.Placeholder] = \"" .. pv:sub(1, 100) .. "\"", c)
     end
 
-    -- Children yang relevan
-    local okC, children = pcall(function() return obj:GetChildren() end)
-    if okC then
-        for _, child in ipairs(children) do
-            local cn = child.ClassName
-            local isData = VALUE_CLASSES[cn]
-                or cn:find("Remote") ~= nil
-                or cn:find("Bindable") ~= nil
+    -- Children data
+    local ok6, ch = pcall(function() return obj:GetChildren() end)
+    if ok6 then
+        for _, child in ipairs(ch) do
+            local cn    = child.ClassName
+            local isData = VALUE_CLS[cn]
+                or (cn:find("Remote") ~= nil)
+                or (cn:find("Bindable") ~= nil)
                 or cn == "ProximityPrompt"
                 or cn == "Folder"
 
-            if isData or matchKW(child.Name) then
-                log(ind .. "  child [" .. cn .. "] " .. child.Name, C.grey)
+            if isData or isMatch(child.Name) then
+                addLine(ind .. "  child [" .. cn .. "] " .. child.Name, cGrey)
 
-                -- Attribute child
-                local okCA, cattrs = pcall(function() return child:GetAttributes() end)
-                if okCA then
-                    for k, v in pairs(cattrs) do
-                        local col = matchKW(k) and C.match or C.attr
-                        log(ind .. "    [ATTR] " .. k .. " = " .. tostring(v), col)
+                local ok7, ca = pcall(function() return child:GetAttributes() end)
+                if ok7 then
+                    for k, v in pairs(ca) do
+                        local c = isMatch(k) and cMatch or cAttr
+                        addLine(ind .. "    [attr] " .. k .. " = " .. tostring(v), c)
                     end
                 end
 
-                -- Value child
-                if VALUE_CLASSES[cn] then
-                    local okV2, val2 = pcall(function() return child.Value end)
-                    if okV2 then
-                        local col = matchKW(tostring(val2)) and C.match or C.value
-                        log(ind .. "    [VALUE] = " .. tostring(val2), col)
+                if VALUE_CLS[cn] then
+                    local ok8, vv = pcall(function() return child.Value end)
+                    if ok8 then
+                        local c = isMatch(tostring(vv)) and cMatch or cVal
+                        addLine(ind .. "    [.Value] = " .. tostring(vv), c)
                     end
                 end
 
-                -- Text child
-                local okTC, tv = pcall(function() return child.Text end)
-                if okTC and type(tv) == "string" and #tv > 0 then
-                    local col = matchKW(tv) and C.match or C.prop
-                    log(ind .. "    [TEXT] = \"" .. tv:sub(1, 80) .. "\"", col)
+                local ok9, ct = pcall(function() return child.Text end)
+                if ok9 and type(ct) == "string" and #ct > 0 then
+                    local c = isMatch(ct) and cMatch or cProp
+                    addLine(ind .. "    [.Text] = \"" .. ct:sub(1, 80) .. "\"", c)
                 end
             end
         end
     end
 end
 
--- Deep scan
-local totalFound = 0
+-- Walk rekursif
+local total = 0
 
-local function deepScan(root, maxDepth)
-    maxDepth = maxDepth or 12
+local function walk(obj, depth, maxDepth)
+    if depth > maxDepth then return end
+    if not obj then return end
 
-    local function walk(obj, depth)
-        if depth > maxDepth then return end
-        if not obj then return end
+    local nameHit = isMatch(obj.Name)
 
-        -- Cek semua kemungkinan match
-        local nameMatch = matchKW(obj.Name)
+    local textHit = false
+    local ok1, tv = pcall(function() return obj.Text end)
+    if ok1 and type(tv) == "string" then textHit = isMatch(tv) end
 
-        local textMatch = false
-        local okT, tv = pcall(function() return obj.Text end)
-        if okT and type(tv) == "string" then
-            textMatch = matchKW(tv)
-        end
+    local valHit = false
+    local ok2, vv = pcall(function() return obj.Value end)
+    if ok2 and type(vv) == "string" then valHit = isMatch(vv) end
 
-        local valMatch = false
-        local okV, vv = pcall(function() return obj.Value end)
-        if okV and type(vv) == "string" then
-            valMatch = matchKW(vv)
-        end
-
-        if nameMatch or textMatch or valMatch then
-            totalFound += 1
-            local tag = "(*)"
-            if nameMatch  then tag = "[NAME]"  end
-            if textMatch  then tag = "[TEXT]"  end
-            if valMatch   then tag = "[VALUE]" end
-            if nameMatch and (textMatch or valMatch) then tag = "[NAME+]" end
-
-            divider(tag .. " " .. obj.ClassName .. " : " .. obj.Name)
-            printDetail(obj, "  ")
-        end
-
-        -- Rekursif
-        local okC, ch = pcall(function() return obj:GetChildren() end)
-        if okC then
-            for _, c in ipairs(ch) do
-                walk(c, depth + 1)
-            end
-        end
+    if nameHit or textHit or valHit then
+        total += 1
+        local tag = "[name]"
+        if textHit then tag = "[text]" end
+        if valHit  then tag = "[val]"  end
+        if nameHit then tag = "[NAME]" end
+        hr(tag .. " " .. obj.ClassName .. " : " .. obj.Name)
+        detail(obj, "  ")
     end
 
-    walk(root, 0)
-end
-
--- Scan semua sumber
-local function doScanAll()
-    clearLog()
-    totalFound = 0
-    countLbl.Text = "Scanning..."
-
-    log("Keyword: detective | evidence", C.match)
-    log("[NAME]=nama match  [TEXT]=teks match  [VALUE]=value match", C.grey)
-    divider()
-
-    local sources = {
-        {
-            label = "WORKSPACE",
-            fn    = function() deepScan(workspace, 12) end
-        },
-        {
-            label = "REPLICATED STORAGE",
-            fn    = function() deepScan(ReplicatedStorage, 12) end
-        },
-        {
-            label = "PLAYER GUI",
-            fn    = function()
-                local pg = LP:FindFirstChild("PlayerGui")
-                if pg then deepScan(pg, 12) end
-            end
-        },
-        {
-            label = "BACKPACK",
-            fn    = function()
-                local bp = LP:FindFirstChild("Backpack")
-                if bp then deepScan(bp, 8) end
-            end
-        },
-        {
-            label = "CHARACTER",
-            fn    = function()
-                local char = LP.Character
-                if char then deepScan(char, 8) end
-            end
-        },
-        {
-            label = "PLAYER OBJECT",
-            fn    = function() deepScan(LP, 6) end
-        },
-        {
-            label = "TEAMS",
-            fn    = function()
-                pcall(function()
-                    local tm = game:GetService("Teams")
-                    if tm then deepScan(tm, 6) end
-                end)
-            end
-        },
-    }
-
-    for _, src in ipairs(sources) do
-        log("", C.grey)
-        log("=== " .. src.label .. " ===", C.header)
-        local before = totalFound
-        src.fn()
-        local found = totalFound - before
-        if found == 0 then
-            log("  (tidak ada match)", C.grey)
-        else
-            log("  match: " .. found, C.match)
+    local ok3, ch = pcall(function() return obj:GetChildren() end)
+    if ok3 then
+        for _, c in ipairs(ch) do
+            walk(c, depth + 1, maxDepth)
         end
-        task.wait(0.05) -- biar tidak freeze
     end
-
-    divider()
-    local msg = "Selesai — total " .. totalFound .. " match"
-    log(msg, C.match)
-    countLbl.Text = msg
 end
 
--- Buttons
+local function scanSource(label, root, depth)
+    addLine("", cGrey)
+    addLine("=== " .. label .. " ===", cHead)
+    local before = total
+    if root then walk(root, 0, depth) end
+    local found = total - before
+    if found == 0 then
+        addLine("  (tidak ada match)", cGrey)
+    else
+        addLine("  >> " .. found .. " match", cMatch)
+    end
+    task.wait(0.05)
+end
+
+local function doScan()
+    wipe()
+    total = 0
+    statusLbl.Text = "Scanning..."
+
+    addLine("keyword: detective | evidence", cMatch)
+    addLine("[NAME]=nama  [text]=teks  [val]=value", cGrey)
+    hr()
+
+    scanSource("WORKSPACE",          workspace,                          12)
+    scanSource("REPLICATED STORAGE", RS,                                 12)
+    scanSource("PLAYER GUI",         LP:FindFirstChild("PlayerGui"),     12)
+    scanSource("BACKPACK",           LP:FindFirstChild("Backpack"),      8)
+    scanSource("CHARACTER",          LP.Character,                       8)
+    scanSource("PLAYER OBJECT",      LP,                                 6)
+
+    pcall(function()
+        scanSource("TEAMS", game:GetService("Teams"), 6)
+    end)
+
+    hr()
+    local msg = "Selesai — " .. total .. " match"
+    addLine(msg, cMatch)
+    statusLbl.Text = msg
+end
+
 btnScan.MouseButton1Click:Connect(function()
-    task.spawn(doScanAll)
-end)
-
-btnRescan.MouseButton1Click:Connect(function()
-    task.spawn(doScanAll)
+    task.spawn(doScan)
 end)
 
 btnClear.MouseButton1Click:Connect(function()
-    clearLog()
-    totalFound = 0
-    countLbl.Text = "Log dibersihkan"
-    log("cleared", C.grey)
+    wipe()
+    total = 0
+    statusLbl.Text = "Cleared"
+    addLine("cleared", cGrey)
 end)
 
--- Auto scan
 task.delay(1, function()
-    task.spawn(doScanAll)
+    task.spawn(doScan)
 end)
 
-log("Auto scan dalam 1 detik...", C.match)
+addLine("Auto scan dalam 1 detik...", cMatch)
