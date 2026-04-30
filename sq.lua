@@ -59,7 +59,8 @@ local WP_LOBBY = {
 }
 
 local CFG = {
-    collectRadius = 40,
+    collectRadius = 35,
+    promptReach   = 8,
     wpReach       = 7,
     moveTimeout   = 10,
     speed         = 100,
@@ -79,9 +80,8 @@ local autoNoclipActive = false
 local foundModels      = {}
 local highlights       = {}
 
--- Forward declare UI refs
+-- Forward declare
 local statusTxt
-
 local function updateStatus(t, col)
     if not statusTxt then return end
     statusTxt.Text       = t or ""
@@ -198,7 +198,10 @@ if babyAction then
     end)
 end
 
--- Movement
+-- ================================================================
+--  MOVEMENT — sama persis dengan v11 yang work
+--  pakai COLLECT_ON sebagai flag
+-- ================================================================
 local function runTo(target, timeout)
     local hu = getHum(); local h = getHRP()
     if not hu or not h then return false end
@@ -218,26 +221,32 @@ local function runTo(target, timeout)
     while elapsed < limit do
         task.wait(0.1); elapsed += 0.1
         if not COLLECT_ON then autoNoclipActive = false; return false end
+
         local cur = getHRP(); if not cur then return false end
         local hu2 = getHum()
+
         if hu2 then
             hu2.WalkSpeed    = CFG.speed
             hu2.UseJumpPower = true
             hu2.JumpPower    = CFG.jumpPower
         end
+
         if (cur.Position - target).Magnitude <= CFG.wpReach then
             autoNoclipActive = false
             if not NOCLIP_ON then applyNoclip(false) end
             return true
         end
+
         if elapsed % 0.6 < 0.11 then
             if hu2 then hu2:MoveTo(target) end
         end
+
         local moved = (cur.Position - lastPos).Magnitude
         if moved < 0.5 then
             stuckTime += 0.1
             if stuckTime >= 0.5 and not autoNoclipActive then
                 autoNoclipActive = true; noclipT = 0
+                updateStatus("Noclip ON", Color3.fromRGB(200,100,255))
             end
             if stuckTime >= 0.8 then
                 if hu2 then hu2.Jump = true end
@@ -257,25 +266,71 @@ local function runTo(target, timeout)
                 if noclipT >= 0.5 then
                     autoNoclipActive = false; noclipT = 0
                     if not NOCLIP_ON then applyNoclip(false) end
+                    updateStatus("Noclip OFF", Color3.fromRGB(100,220,140))
                 end
             end
         end
         lastPos = cur.Position
     end
+
     autoNoclipActive = false
     if not NOCLIP_ON then applyNoclip(false) end
     return false
 end
 
--- Collect semua yang ada di sekitar, tanpa hitung, tanpa batas
--- Ganti collectNearby — nyamperin tiap evidence satu per satu
+-- ================================================================
+--  FIRE AT — sama persis dengan v11
+--  jalan ke evidence lalu fire
+-- ================================================================
+local function fireAt(prompt, pos)
+    if not prompt or not pos then return false end
+    local h = getHRP(); if not h then return false end
+
+    local d = (h.Position - pos).Magnitude
+
+    if d > CFG.promptReach * 4 then
+        -- Terlalu jauh → teleport
+        local hrp = getHRP()
+        if hrp then
+            hrp.CFrame = CFrame.new(pos + Vector3.new(0,4,0))
+            task.wait(0.35)
+        end
+    elseif d > CFG.promptReach then
+        -- Jalan mendekati
+        local hu = getHum()
+        if hu then
+            hu.WalkSpeed = CFG.speed
+            hu:MoveTo(pos)
+            local t = 0
+            while t < 4 do
+                task.wait(0.1); t += 0.1
+                if not COLLECT_ON then return false end
+                local cur = getHRP(); if not cur then return false end
+                if (cur.Position - pos).Magnitude <= CFG.promptReach then break end
+            end
+        end
+    end
+
+    -- Berhenti sebentar lalu fire
+    local hu2 = getHum(); local h2 = getHRP()
+    if hu2 and h2 then hu2:MoveTo(h2.Position) end
+    task.wait(0.2)
+    if not COLLECT_ON then return false end
+    local ok = pcall(function() fireproximityprompt(prompt) end)
+    task.wait(0.2)
+    return ok
+end
+
+-- ================================================================
+--  COLLECT NEARBY — sama persis dengan v11
+--  scan radius → jalan ke tiap evidence → fire
+--  TANPA hitung, tanpa batas, tanpa phase check
+-- ================================================================
 local function collectNearby()
-    local folder = getEvidenceFolder()
-    if not folder then return end
+    local folder = getEvidenceFolder(); if not folder then return end
     local h = getHRP(); if not h then return end
 
-    -- Kumpulkan semua yang dalam radius
-    local targets = {}
+    local nearby = {}
     for _, model in ipairs(folder:GetChildren()) do
         local pr = getPromptFromModel(model)
         if pr then
@@ -283,41 +338,32 @@ local function collectNearby()
             if bp then
                 local d = (bp.Position - h.Position).Magnitude
                 if d <= CFG.collectRadius then
-                    table.insert(targets, {prompt=pr, pos=bp.Position, d=d})
+                    table.insert(nearby, {prompt=pr, pos=bp.Position, d=d, name=model.Name})
                 end
             end
         end
     end
 
-    if #targets == 0 then return end
-    table.sort(targets, function(a,b) return a.d < b.d end)
+    if #nearby == 0 then return end
+    table.sort(nearby, function(a, b) return a.d < b.d end)
 
-    for _, t in ipairs(targets) do
+    for _, ev in ipairs(nearby) do
         if not COLLECT_ON then return end
-
-        -- Jalan ke evidence
-        local hrp = getHRP(); if not hrp then return end
-        if (hrp.Position - t.pos).Magnitude > 8 then
-            local hu = getHum()
-            if hu then
-                hu.WalkSpeed = CFG.speed
-                hu:MoveTo(t.pos)
-                local elapsed = 0
-                while elapsed < 4 do
-                    task.wait(0.1); elapsed += 0.1
-                    local cur = getHRP(); if not cur then break end
-                    if (cur.Position - t.pos).Magnitude <= 8 then break end
-                end
-            end
+        updateStatus("Collect: " .. ev.name, Color3.fromRGB(100,220,140))
+        -- Fire dulu dari jauh
+        pcall(function() fireproximityprompt(ev.prompt) end)
+        task.wait(0.15)
+        -- Kalau masih ada (jauh) → jalan mendekati dan fire lagi
+        if ev.d > 10 then
+            fireAt(ev.prompt, ev.pos)
         end
-
-        -- Fire
-        pcall(function() fireproximityprompt(t.prompt) end)
-        task.wait(0.2)
+        task.wait(0.15)
     end
 end
 
--- Ganti runCollect — hapus semua counting
+-- ================================================================
+--  AUTO COLLECT LOOP — jalan WP lobby, collect terus tanpa batas
+-- ================================================================
 local function runCollect()
     wpIdx = 1
     local h0 = getHRP()
@@ -331,6 +377,7 @@ local function runCollect()
 
         if wpIdx > #WP_LOBBY then wpIdx = 1 end
 
+        -- Forward tracking: kalau ada WP yang lebih maju → pakai itu
         local nearIdx = nearestWpIndex(WP_LOBBY, h.Position)
         if nearIdx > wpIdx then wpIdx = nearIdx end
 
@@ -485,7 +532,7 @@ local hlPill,      hlBtn      = mkRow("Highlight",         "H",  rY(1))
 local spPill,      spBtn      = mkRow("Speed + Jump",      "S",  rY(2))
 local ncPill,      ncBtn      = mkRow("Noclip",            "N",  rY(3))
 local collectPill, collectBtn = mkRow("Auto Collect Lobby", "C", rY(4))
-local autoPill,    autoBtn    = mkRow("Auto Collect Scan",  "AC", rY(5))
+local autoPill,    autoBtn    = mkRow("Auto Collect Scan",  "AC",rY(5))
 local babyPill,    babyBtn    = mkRow("Auto Baby",         "B",  rY(6))
 setPill(hlPill, true)
 
@@ -593,6 +640,8 @@ collectBtn.MouseButton1Click:Connect(function()
     if COLLECT_ON then
         task.spawn(runCollect)
     else
+        autoNoclipActive = false
+        if not NOCLIP_ON then applyNoclip(false) end
         updateStatus("Auto collect stop", C.dim)
     end
 end)
