@@ -1,7 +1,6 @@
 -- ================================================================
---  AI FARMING v5  —  SMART WAYPOINT LOOP
---  Satu jalur, jalan terus, collect sambil lewat.
---  Lobby/Facility/Deposit di-trigger otomatis sesuai kondisi.
+--  AI FARMING v6
+--  Fix: collect lebih reliable, respawn auto-resume dari WP terdekat
 -- ================================================================
 
 local Players          = game:GetService("Players")
@@ -9,10 +8,9 @@ local UserInputService = game:GetService("UserInputService")
 local LP               = Players.LocalPlayer
 
 -- ================================================================
---  WAYPOINT DATA
+--  WAYPOINTS
 -- ================================================================
 local WAYPOINTS = {
-    -- === Island → Lift Lobby ===
     Vector3.new(-2844.08, -786.00, 15535.26), -- 1
     Vector3.new(-2841.83, -786.00, 15469.03), -- 2
     Vector3.new(-2839.82, -786.00, 15407.23), -- 3
@@ -47,10 +45,9 @@ local WAYPOINTS = {
     Vector3.new(-2056.80, -839.85, 15969.66), -- 32
     Vector3.new(-2035.75, -850.47, 15948.00), -- 33
     Vector3.new(-2006.17, -859.85, 15913.94), -- 34
-    Vector3.new(-1978.29, -859.52, 15893.26), -- 35  ← ujung: dekat lift lobby
+    Vector3.new(-1978.29, -859.52, 15893.26), -- 35  ← dekat lift Lobby
 
-    -- === Lobby → Area Evidence ===
-    Vector3.new( 8161.05,  100.88,  3460.91), -- 36  ← spawn setelah lift
+    Vector3.new( 8161.05,  100.88,  3460.91), -- 36  ← spawn lobby
     Vector3.new( 8158.37,  100.64,  3494.41), -- 37
     Vector3.new( 8159.02,  100.64,  3522.74), -- 38
     Vector3.new( 8158.81,  100.64,  3558.08), -- 39
@@ -92,11 +89,9 @@ local WAYPOINTS = {
     Vector3.new( 8163.99,  100.64,  3502.53), -- 75
     Vector3.new( 8163.24,  100.64,  3471.31), -- 76
 
-    -- === Kembali ke Lift Island ===
-    Vector3.new( 8160.69,  100.88,  3458.90), -- 77  ← dekat lift facility
+    Vector3.new( 8160.69,  100.88,  3458.90), -- 77  ← dekat lift Facility
 
-    -- === Island → Deposit ===
-    Vector3.new(-1981.01, -859.52, 15893.56), -- 78  ← spawn setelah lift
+    Vector3.new(-1981.01, -859.52, 15893.56), -- 78  ← spawn island balik
     Vector3.new(-2008.04, -859.85, 15927.52), -- 79
     Vector3.new(-2023.92, -855.97, 15946.54), -- 80
     Vector3.new(-2035.30, -847.92, 15957.90), -- 81
@@ -135,46 +130,80 @@ local WAYPOINTS = {
     Vector3.new(-2834.13, -786.00, 15434.92), -- 114
     Vector3.new(-2838.56, -786.00, 15493.48), -- 115
     Vector3.new(-2851.38, -786.00, 15524.46), -- 116
-    Vector3.new(-2875.53, -787.19, 15550.73), -- 117
+    Vector3.new(-2875.53, -787.19, 15550.73), -- 117  ← ujung, deposit lalu reset
 }
 
 -- ================================================================
---  DETEKSI ZONA dari koordinat
---  Island: Y sekitar -786, X sekitar -2000 s/d -2900
---  Lobby:  Y sekitar 100,  X sekitar 7900 s/d 8300
+--  ZONA — deteksi dari koordinat Y
+--  Island: Y < -100  |  Lobby: Y > 50
 -- ================================================================
-local function isLobbyZone(pos)
-    return pos.Y > 50  -- lobby jauh lebih tinggi dari island
+local ZONE = {
+    ISLAND = { wpStart = 1,  wpEnd = 35  },
+    LOBBY  = { wpStart = 36, wpEnd = 77  },
+    BACK   = { wpStart = 78, wpEnd = 117 },
+}
+
+local function getZone(pos)
+    if not pos then return nil end
+    if pos.Y > 50  then return "LOBBY"  end
+    if pos.Y < -100 then return "ISLAND" end
+    return nil  -- zona tidak dikenal
 end
 
--- WP 35 = ujung island sebelum lift lobby
--- WP 36 = pertama di lobby
--- WP 77 = ujung lobby sebelum lift facility
--- WP 78 = pertama di island setelah lift
-local WP_LIFT_LOBBY    = 35   -- waypoint terdekat ke prompt Lobby
-local WP_LIFT_FACILITY = 77   -- waypoint terdekat ke prompt Facility
-local WP_DEPOSIT_AREA  = 110  -- mulai dekat deposit (island, balik)
+-- Cari WP terdekat dalam range index tertentu
+local function nearestWP(pos, fromIdx, toIdx)
+    local bestIdx, bestDist = fromIdx, math.huge
+    for i = fromIdx, toIdx do
+        local d = (WAYPOINTS[i] - pos).Magnitude
+        if d < bestDist then
+            bestDist = d
+            bestIdx  = i
+        end
+    end
+    return bestIdx
+end
+
+-- Dari posisi sekarang, tentukan WP terbaik untuk resume
+local function resolveStartWP(pos, wentLobby)
+    local zone = getZone(pos)
+    if zone == "LOBBY" then
+        -- Di lobby → cari WP terdekat di range lobby
+        return nearestWP(pos, ZONE.LOBBY.wpStart, ZONE.LOBBY.wpEnd), true
+    elseif zone == "ISLAND" then
+        if wentLobby then
+            -- Sudah pernah ke lobby → lagi di island balik ke deposit
+            return nearestWP(pos, ZONE.BACK.wpStart, ZONE.BACK.wpEnd), true
+        else
+            -- Belum ke lobby → masih di island awal
+            return nearestWP(pos, ZONE.ISLAND.wpStart, ZONE.ISLAND.wpEnd), false
+        end
+    else
+        -- Zona tidak dikenal (jatuh ke luar?) → mulai dari WP 1
+        return 1, false
+    end
+end
 
 -- ================================================================
 --  CONFIG
 -- ================================================================
 local CFG = {
     maxEvidence   = 8,
-    collectRadius = 20,   -- studs — radius ambil evidence sambil lewat
-    promptReach   = 10,   -- studs — jarak fire prompt
-    wpReach       = 5,    -- studs — dianggap sampai di waypoint
-    moveTimeout   = 4,    -- detik max per waypoint
-    liftWait      = 6,    -- detik tunggu lift/teleport
-    depositWait   = 3,    -- detik tunggu animasi deposit
+    collectRadius = 20,   -- studs radius collect sambil lewat
+    promptReach   = 6,    -- studs jarak stop sebelum fire prompt
+    wpReach       = 5,    -- studs dianggap sampai di WP
+    moveTimeout   = 5,    -- detik max per WP sebelum skip
+    liftWait      = 6,    -- detik tunggu lift
+    depositWait   = 3,    -- detik tunggu deposit
+    stopTimeout   = 1.0,  -- detik berhenti sebelum fire collect (biar terdaftar)
 }
 
 -- ================================================================
 --  STATE
 -- ================================================================
-local AI_ON      = false
-local collected  = 0        -- evidence terkumpul cycle ini
-local wentLobby  = false    -- sudah ke lobby cycle ini?
-local didDeposit = false    -- sudah deposit cycle ini?
+local AI_ON     = false
+local collected = 0
+local wentLobby = false
+local currentWP = 1
 
 -- ================================================================
 --  HELPERS
@@ -190,30 +219,11 @@ local function hum()
     local c = ch()
     return c and c:FindFirstChildOfClass("Humanoid")
 end
+local function wait01() task.wait(0.1) end
 
 -- ================================================================
---  EVIDENCE HELPERS
+--  PROMPT HELPERS
 -- ================================================================
-local function getFolder()
-    local ok, r = pcall(function()
-        return workspace:WaitForChild("Data",3)
-            :WaitForChild("Detective",3)
-            :WaitForChild("Evidence",3)
-            :WaitForChild("Instances",3)
-    end)
-    return ok and r or nil
-end
-
-local function collectPromptOf(model)
-    for _, d in ipairs(model:GetDescendants()) do
-        if d:IsA("ProximityPrompt") then
-            local a = d.ActionText:lower()
-            local o = d.ObjectText:lower()
-            if a == "collect" or o == "collect" then return d end
-        end
-    end
-end
-
 local function findPromptByText(text)
     for _, o in ipairs(workspace:GetDescendants()) do
         if o:IsA("ProximityPrompt") and
@@ -229,147 +239,92 @@ local function findPromptByText(text)
     return nil, nil
 end
 
--- ================================================================
---  GUI — minimalis, hanya status + tombol ON/OFF
--- ================================================================
-local gui   = Instance.new("ScreenGui", LP:WaitForChild("PlayerGui"))
-gui.Name    = "AIv5"; gui.ResetOnSpawn = false
-
-local frame = Instance.new("Frame", gui)
-frame.Size             = UDim2.new(0, 260, 0, 160)
-frame.Position         = UDim2.new(0, 10, 0, 10)
-frame.BackgroundColor3 = Color3.fromRGB(13, 13, 17)
-frame.BorderSizePixel  = 0
-frame.Active           = true
-frame.Draggable        = true
-Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 12)
-
-local accentLine = Instance.new("Frame", frame)
-accentLine.Size             = UDim2.new(1, 0, 0, 3)
-accentLine.BackgroundColor3 = Color3.fromRGB(30, 180, 120)
-accentLine.BorderSizePixel  = 0; accentLine.ZIndex = 5
-Instance.new("UICorner", accentLine).CornerRadius = UDim.new(0, 12)
-
-local titleLbl = Instance.new("TextLabel", frame)
-titleLbl.Size              = UDim2.new(1, -16, 0, 18)
-titleLbl.Position          = UDim2.new(0, 12, 0, 8)
-titleLbl.BackgroundTransparency = 1
-titleLbl.Text              = "🧠  AI Farming v5"
-titleLbl.TextColor3        = Color3.fromRGB(255, 255, 255)
-titleLbl.Font              = Enum.Font.GothamBold
-titleLbl.TextSize          = 13
-titleLbl.TextXAlignment    = Enum.TextXAlignment.Left
-titleLbl.ZIndex            = 4
-
--- Status
-local statusLbl = Instance.new("TextLabel", frame)
-statusLbl.Size             = UDim2.new(1, -16, 0, 14)
-statusLbl.Position         = UDim2.new(0, 12, 0, 30)
-statusLbl.BackgroundTransparency = 1
-statusLbl.Text             = "Idle"
-statusLbl.TextColor3       = Color3.fromRGB(160, 160, 180)
-statusLbl.Font             = Enum.Font.Gotham
-statusLbl.TextSize         = 11
-statusLbl.TextXAlignment   = Enum.TextXAlignment.Left
-statusLbl.ZIndex           = 4
-
--- Evidence count
-local countLbl = Instance.new("TextLabel", frame)
-countLbl.Size             = UDim2.new(1, -16, 0, 13)
-countLbl.Position         = UDim2.new(0, 12, 0, 47)
-countLbl.BackgroundTransparency = 1
-countLbl.Text             = "Evidence: 0 / " .. CFG.maxEvidence
-countLbl.TextColor3       = Color3.fromRGB(80, 220, 130)
-countLbl.Font             = Enum.Font.GothamBold
-countLbl.TextSize         = 11
-countLbl.TextXAlignment   = Enum.TextXAlignment.Left
-countLbl.ZIndex           = 4
-
--- WP info
-local wpLbl = Instance.new("TextLabel", frame)
-wpLbl.Size             = UDim2.new(1, -16, 0, 12)
-wpLbl.Position         = UDim2.new(0, 12, 0, 63)
-wpLbl.BackgroundTransparency = 1
-wpLbl.Text             = "WP: —"
-wpLbl.TextColor3       = Color3.fromRGB(120, 120, 160)
-wpLbl.Font             = Enum.Font.Code
-wpLbl.TextSize         = 10
-wpLbl.TextXAlignment   = Enum.TextXAlignment.Left
-wpLbl.ZIndex           = 4
-
--- Tombol ON/OFF
-local btnAI = Instance.new("TextButton", frame)
-btnAI.Size             = UDim2.new(1, -16, 0, 36)
-btnAI.Position         = UDim2.new(0, 8, 0, 84)
-btnAI.BackgroundColor3 = Color3.fromRGB(32, 32, 42)
-btnAI.TextColor3       = Color3.new(1, 1, 1)
-btnAI.Font             = Enum.Font.GothamBold
-btnAI.TextSize         = 13
-btnAI.Text             = "🧠  AI  :  OFF"
-btnAI.AutoButtonColor  = false
-btnAI.BorderSizePixel  = 0
-btnAI.ZIndex           = 3
-Instance.new("UICorner", btnAI).CornerRadius = UDim.new(0, 9)
-
-local hint = Instance.new("TextLabel", frame)
-hint.Size               = UDim2.new(1, -16, 0, 11)
-hint.Position           = UDim2.new(0, 8, 1, -13)
-hint.BackgroundTransparency = 1
-hint.Text               = "RightCtrl = hide/show"
-hint.TextColor3         = Color3.fromRGB(45, 45, 60)
-hint.Font               = Enum.Font.Gotham
-hint.TextSize           = 9
-hint.TextXAlignment     = Enum.TextXAlignment.Left
-hint.ZIndex             = 3
-
-UserInputService.InputBegan:Connect(function(i, gp)
-    if not gp and i.KeyCode == Enum.KeyCode.RightControl then
-        gui.Enabled = not gui.Enabled
+local function collectPromptOf(model)
+    for _, d in ipairs(model:GetDescendants()) do
+        if d:IsA("ProximityPrompt") then
+            local a = d.ActionText:lower()
+            local o = d.ObjectText:lower()
+            if a == "collect" or o == "collect" then return d end
+        end
     end
-end)
+end
 
-local function setStatus(t, col)
-    statusLbl.Text      = t
-    statusLbl.TextColor3 = col or Color3.fromRGB(160, 160, 180)
-end
-local function setCount(n)
-    countLbl.Text = "Evidence: " .. n .. " / " .. CFG.maxEvidence
-end
-local function setWP(i, total)
-    wpLbl.Text = "WP: " .. i .. " / " .. total
+local function getFolder()
+    local ok, r = pcall(function()
+        return workspace:WaitForChild("Data",3)
+            :WaitForChild("Detective",3)
+            :WaitForChild("Evidence",3)
+            :WaitForChild("Instances",3)
+    end)
+    return ok and r or nil
 end
 
 -- ================================================================
---  FIRE PROMPT — jalan ke posisi lalu trigger
+--  WALK TO — MoveTo murni, tidak ada pathfinding
+--  Return true kalau sampai, false kalau timeout/AI mati
 -- ================================================================
-local function fireAt(prompt, pos, label)
+local function walkTo(target, timeoutSec)
+    local hu = hum(); local h = hrp()
+    if not hu or not h then return false end
+    if (h.Position - target).Magnitude <= CFG.wpReach then return true end
+
+    hu:MoveTo(target)
+    local t = 0
+    local limit = timeoutSec or CFG.moveTimeout
+    while t < limit do
+        wait01(); t += 0.1
+        if not AI_ON then return false end
+        local cur = hrp()
+        if not cur then return false end
+        if (cur.Position - target).Magnitude <= CFG.wpReach then return true end
+    end
+    return false  -- timeout → skip saja, tidak ada retry
+end
+
+-- ================================================================
+--  FIRE PROXIMITY PROMPT — berhenti dulu, baru fire
+--  Ini fix utama collect yang gagal di v5
+-- ================================================================
+local function firePromptAt(prompt, pos, label)
     if not prompt or not pos then return false end
-    local h = hrp(); local hu = hum()
-    if not h or not hu then return false end
 
-    -- Jalan ke posisi prompt
+    local hu = hum(); local h = hrp()
+    if not hu or not h then return false end
+
+    -- Jalan ke dekat prompt
     if (h.Position - pos).Magnitude > CFG.promptReach then
-        setStatus("🚶 → " .. label, Color3.fromRGB(80, 180, 255))
         hu:MoveTo(pos)
         local t = 0
-        repeat
-            task.wait(0.1); t += 0.1
+        while t < 6 do
+            wait01(); t += 0.1
             if not AI_ON then return false end
-            local c = hrp()
-            if c and (c.Position - pos).Magnitude <= CFG.promptReach then break end
-        until t >= 6
+            local cur = hrp()
+            if not cur then return false end
+            if (cur.Position - pos).Magnitude <= CFG.promptReach then break end
+        end
     end
 
-    task.wait(0.2)
+    -- STOP — berhenti total sebelum fire
+    -- Ini kunci: karakter harus berhenti bergerak agar prompt terdaftar
+    local hu2 = hum(); local h2 = hrp()
+    if hu2 and h2 then
+        hu2:MoveTo(h2.Position)  -- berhenti di tempat
+    end
+    task.wait(CFG.stopTimeout)  -- tunggu sebentar
+
+    if not AI_ON then return false end
+
+    -- Fire prompt
     local ok = pcall(function() fireproximityprompt(prompt) end)
+    task.wait(0.3)
     return ok
 end
 
 -- ================================================================
---  COLLECT EVIDENCE TERDEKAT dari posisi sekarang
---  Dipanggil setiap kali karakter sampai di waypoint
+--  COLLECT EVIDENCE SAMBIL LEWAT
+--  Dipanggil tiap sampai di WP — ambil semua dalam radius
 -- ================================================================
-local function tryCollectNearby()
+local function collectNearby()
     if collected >= CFG.maxEvidence then return end
     local folder = getFolder()
     if not folder then return end
@@ -377,212 +332,283 @@ local function tryCollectNearby()
     local h = hrp()
     if not h then return end
 
-    -- Kumpulkan semua evidence dalam radius
+    -- Kumpulkan evidence dalam radius
     local nearby = {}
     for _, model in ipairs(folder:GetChildren()) do
         local pr = collectPromptOf(model)
         if pr then
-            local bp = model.PrimaryPart or model:FindFirstChildWhichIsA("BasePart", true)
+            local bp = model.PrimaryPart or model:FindFirstChildWhichIsA("BasePart",true)
             if bp then
                 local d = (bp.Position - h.Position).Magnitude
                 if d <= CFG.collectRadius then
-                    table.insert(nearby, { prompt = pr, pos = bp.Position, d = d, name = model.Name })
+                    table.insert(nearby, { prompt=pr, pos=bp.Position, d=d, name=model.Name })
                 end
             end
         end
     end
 
     if #nearby == 0 then return end
-    table.sort(nearby, function(a, b) return a.d < b.d end)
-
-    local hu = hum()
-    if not hu then return end
+    table.sort(nearby, function(a,b) return a.d < b.d end)
 
     for _, ev in ipairs(nearby) do
         if not AI_ON then return end
         if collected >= CFG.maxEvidence then break end
 
-        -- Jalan ke evidence
-        setStatus(string.format("📦 %s (%.0fst)", ev.name, ev.d), Color3.fromRGB(80, 220, 130))
-        hu:MoveTo(ev.pos)
+        setStatus("📦 " .. ev.name .. string.format(" (%.0fst)", ev.d), Color3.fromRGB(80,220,130))
 
-        local t = 0
-        repeat
-            task.wait(0.1); t += 0.1
-            if not AI_ON then return end
-            local c = hrp()
-            if c and (c.Position - ev.pos).Magnitude <= CFG.promptReach then break end
-        until t >= 5
-
-        local ok = pcall(function() fireproximityprompt(ev.prompt) end)
+        local ok = firePromptAt(ev.prompt, ev.pos, ev.name)
         if ok then
             collected += 1
             setCount(collected)
+            setStatus("✅ " .. collected .. "/" .. CFG.maxEvidence, Color3.fromRGB(80,220,130))
         end
-        task.wait(0.3)
+        task.wait(0.2)
     end
 end
 
 -- ================================================================
+--  GUI — minimalis
+-- ================================================================
+local gui = Instance.new("ScreenGui", LP:WaitForChild("PlayerGui"))
+gui.Name = "AIv6"; gui.ResetOnSpawn = false
+
+local frame = Instance.new("Frame", gui)
+frame.Size             = UDim2.new(0, 255, 0, 155)
+frame.Position         = UDim2.new(0, 10, 0, 10)
+frame.BackgroundColor3 = Color3.fromRGB(13,13,17)
+frame.BorderSizePixel  = 0
+frame.Active           = true
+frame.Draggable        = true
+Instance.new("UICorner", frame).CornerRadius = UDim.new(0,12)
+
+local strip = Instance.new("Frame", frame)
+strip.Size=UDim2.new(1,0,0,3); strip.BackgroundColor3=Color3.fromRGB(30,180,120)
+strip.BorderSizePixel=0; strip.ZIndex=5
+Instance.new("UICorner",strip).CornerRadius=UDim.new(0,12)
+
+local function mkLbl(txt, y, col, font, sz)
+    local l = Instance.new("TextLabel", frame)
+    l.Size=UDim2.new(1,-16,0,16); l.Position=UDim2.new(0,10,0,y)
+    l.BackgroundTransparency=1; l.Text=txt
+    l.TextColor3=col or Color3.fromRGB(180,180,180)
+    l.Font=font or Enum.Font.Gotham; l.TextSize=sz or 11
+    l.TextXAlignment=Enum.TextXAlignment.Left; l.ZIndex=4
+    return l
+end
+
+mkLbl("🧠  AI Farming v6", 7, Color3.fromRGB(255,255,255), Enum.Font.GothamBold, 13)
+
+local statusLbl = mkLbl("Idle",          26, Color3.fromRGB(160,160,180))
+local countLbl  = mkLbl("Evidence: 0/8", 44, Color3.fromRGB(80,220,130), Enum.Font.GothamBold)
+local wpLbl     = mkLbl("WP: —",         60, Color3.fromRGB(120,120,180), Enum.Font.Code, 10)
+local zoneLbl   = mkLbl("Zona: —",       74, Color3.fromRGB(140,140,160), Enum.Font.Code, 10)
+
+local btnAI = Instance.new("TextButton", frame)
+btnAI.Size=UDim2.new(1,-16,0,36); btnAI.Position=UDim2.new(0,8,0,95)
+btnAI.BackgroundColor3=Color3.fromRGB(32,32,42)
+btnAI.TextColor3=Color3.new(1,1,1); btnAI.Font=Enum.Font.GothamBold
+btnAI.TextSize=13; btnAI.Text="🧠  AI  :  OFF"
+btnAI.AutoButtonColor=false; btnAI.BorderSizePixel=0; btnAI.ZIndex=3
+Instance.new("UICorner",btnAI).CornerRadius=UDim.new(0,9)
+
+local hintL = Instance.new("TextLabel",frame)
+hintL.Size=UDim2.new(1,-16,0,10); hintL.Position=UDim2.new(0,8,1,-12)
+hintL.BackgroundTransparency=1; hintL.Text="RightCtrl = hide/show"
+hintL.TextColor3=Color3.fromRGB(45,45,60); hintL.Font=Enum.Font.Gotham
+hintL.TextSize=9; hintL.TextXAlignment=Enum.TextXAlignment.Left; hintL.ZIndex=3
+
+UserInputService.InputBegan:Connect(function(i,gp)
+    if not gp and i.KeyCode==Enum.KeyCode.RightControl then
+        gui.Enabled = not gui.Enabled
+    end
+end)
+
+-- GUI updaters — didefinisikan setelah label dibuat
+function setStatus(t, col)
+    statusLbl.Text=t; statusLbl.TextColor3=col or Color3.fromRGB(160,160,180)
+end
+function setCount(n)
+    countLbl.Text="Evidence: "..n.."/"..CFG.maxEvidence
+end
+function setWPLabel(i)
+    wpLbl.Text="WP: "..i.."/"..#WAYPOINTS
+end
+function setZone(z)
+    local col = z=="LOBBY" and Color3.fromRGB(80,180,255)
+             or z=="ISLAND" and Color3.fromRGB(80,220,130)
+             or Color3.fromRGB(200,100,100)
+    zoneLbl.Text="Zona: "..(z or "?"); zoneLbl.TextColor3=col
+end
+
+-- ================================================================
+--  RESPAWN HANDLER
+--  Kalau karakter respawn (jatuh dll), deteksi zona baru dan
+--  resume dari WP terdekat di zona tersebut
+-- ================================================================
+LP.CharacterAdded:Connect(function()
+    if not AI_ON then return end
+    -- Tunggu karakter load
+    task.wait(2)
+    local h = hrp()
+    if not h then return end
+
+    local newWP, newLobby = resolveStartWP(h.Position, wentLobby)
+    currentWP = newWP
+    wentLobby = newLobby
+
+    local z = getZone(h.Position)
+    setZone(z or "?")
+    setStatus("🔄 Respawn — resume WP "..newWP, Color3.fromRGB(255,200,60))
+end)
+
+-- ================================================================
 --  MAIN AI LOOP
---  Satu loop besar: jalan waypoint 1→117, lalu ulang.
---  Keputusan lift/deposit dibuat berdasarkan index WP + kondisi.
 -- ================================================================
 local function runAI()
-    collected  = 0
-    wentLobby  = false
-    didDeposit = false
-    setCount(0)
-    setStatus("🤖 Mulai...", Color3.fromRGB(255, 220, 60))
-    task.wait(1)
-
-    local totalWP   = #WAYPOINTS
-    local currentWP = 1   -- mulai dari awal
-
-    -- Deteksi posisi awal: kalau sudah di lobby, mulai dari WP 36
-    local startH = hrp()
-    if startH and isLobbyZone(startH.Position) then
-        currentWP = 36
-        wentLobby = true
+    -- Deteksi posisi awal
+    task.wait(0.5)
+    local h = hrp()
+    if h then
+        currentWP, wentLobby = resolveStartWP(h.Position, false)
+        local z = getZone(h.Position)
+        setZone(z or "?")
+        setStatus("📍 Mulai dari WP "..currentWP, Color3.fromRGB(255,220,60))
+    else
+        currentWP = 1
+        wentLobby = false
     end
 
-    while AI_ON do
+    collected = 0; setCount(0)
+    task.wait(0.5)
 
-        -- ── Ambil waypoint saat ini ───────────────────────────────────────
-        local target = WAYPOINTS[currentWP]
-        if not target then
-            -- Selesai satu putaran → reset
-            currentWP  = 1
-            collected  = 0
-            wentLobby  = false
-            didDeposit = false
-            setCount(0)
-            setStatus("🔄 Ulang siklus...", Color3.fromRGB(255, 220, 60))
-            task.wait(1)
-            continue
+    while AI_ON do
+        local h2 = hrp(); local hu = hum()
+        if not h2 or not hu then task.wait(0.5); continue end
+
+        local total = #WAYPOINTS
+
+        -- Pastikan currentWP valid
+        if currentWP < 1 or currentWP > total then
+            currentWP = 1; wentLobby = false
         end
 
-        local h  = hrp()
-        local hu = hum()
-        if not h or not hu then task.wait(0.5); continue end
+        setWPLabel(currentWP)
+        setZone(getZone(h2.Position) or "?")
 
-        setWP(currentWP, totalWP)
+        -- ──────────────────────────────────────────────────────────────────
+        --  KEPUTUSAN KHUSUS DI WP KRITIS
+        -- ──────────────────────────────────────────────────────────────────
 
-        -- ── Logika khusus di WP tertentu ─────────────────────────────────
-
-        -- WP 35: ujung island → trigger Lobby lift (kalau belum ke lobby & belum penuh)
-        if currentWP == WP_LIFT_LOBBY and not wentLobby and collected < CFG.maxEvidence then
+        -- WP 35: ujung island → coba masuk lobby kalau belum & belum penuh
+        if currentWP == 35 and not wentLobby and collected < CFG.maxEvidence then
             local pr, pos = findPromptByText("Lobby")
             if pr then
-                setStatus("🛗 Masuk lift Lobby...", Color3.fromRGB(255, 220, 60))
-                fireAt(pr, pos, "Lobby Lift")
+                setStatus("🛗 Masuk Lobby...", Color3.fromRGB(255,220,60))
+                firePromptAt(pr, pos, "Lobby")
                 task.wait(CFG.liftWait)
                 if not AI_ON then break end
-                -- Setelah lift, lompat ke WP 36 (lobby)
                 wentLobby = true
                 currentWP = 36
+                setZone("LOBBY")
                 continue
             end
         end
 
-        -- WP 77: ujung lobby → trigger Facility lift (kalau sudah penuh ATAU sudah keliling lobby)
-        if currentWP == WP_LIFT_FACILITY and wentLobby then
-            -- Selalu balik ke island setelah selesai lobby
+        -- WP 77: ujung lobby → kembali ke island via Facility
+        if currentWP == 77 and wentLobby then
             local pr, pos = findPromptByText("Facility")
             if pr then
-                setStatus("🛗 Kembali via Facility lift...", Color3.fromRGB(255, 220, 60))
-                fireAt(pr, pos, "Facility Lift")
+                setStatus("🛗 Kembali via Facility...", Color3.fromRGB(255,220,60))
+                firePromptAt(pr, pos, "Facility")
                 task.wait(CFG.liftWait)
                 if not AI_ON then break end
-                -- Setelah lift, lompat ke WP 78 (island, balik ke deposit)
                 currentWP = 78
+                setZone("ISLAND")
                 continue
             end
         end
 
-        -- WP 117: sudah kembali ke boat/deposit area → deposit kalau ada evidence
-        if currentWP == totalWP then
+        -- WP 117: akhir jalur → deposit, reset
+        if currentWP >= total then
             if collected > 0 then
                 local pr, pos = findPromptByText("Deposit Evidence")
                 if pr then
-                    setStatus("💼 Deposit " .. collected .. " evidence...", Color3.fromRGB(80, 220, 130))
-                    fireAt(pr, pos, "Deposit Evidence")
+                    setStatus("💼 Deposit "..collected.." evidence...", Color3.fromRGB(80,220,130))
+                    firePromptAt(pr, pos, "Deposit")
                     task.wait(CFG.depositWait)
                 end
             end
-            -- Reset siklus
-            currentWP  = 1
-            collected  = 0
-            wentLobby  = false
-            setCount(0)
-            setStatus("🔄 Siklus selesai, ulang...", Color3.fromRGB(255, 220, 60))
+            collected=0; setCount(0)
+            wentLobby=false; currentWP=1
+            setStatus("🔄 Siklus selesai, ulang...", Color3.fromRGB(255,220,60))
             task.wait(1)
             continue
         end
 
-        -- ── Skip waypoint yang tidak relevan dengan zona saat ini ─────────
-        -- Kalau di island tapi WP masuk range lobby (36-77), skip ke 78
-        if not isLobbyZone(h.Position) and currentWP >= 36 and currentWP <= 77 then
-            currentWP = 78
+        -- ──────────────────────────────────────────────────────────────────
+        --  KOREKSI ZONA — kalau karakter ada di zona salah
+        --  (misal: spawn acak di island tapi WP lagi di lobby range)
+        -- ──────────────────────────────────────────────────────────────────
+        local curZone = getZone(h2.Position)
+        if curZone == "LOBBY" and (currentWP < 36 or currentWP > 77) then
+            -- Di lobby tapi WP bukan range lobby → snap ke WP terdekat di lobby
+            currentWP = nearestWP(h2.Position, 36, 77)
+            setStatus("📍 Snap ke WP lobby "..currentWP, Color3.fromRGB(255,200,60))
             continue
         end
-        -- Kalau di lobby tapi WP masuk range island (1-35 atau 78-117), skip ke 36
-        if isLobbyZone(h.Position) and (currentWP <= 35 or currentWP >= 78) then
-            currentWP = 36
-            continue
-        end
-
-        -- ── Jalan ke waypoint ─────────────────────────────────────────────
-        -- Skip kalau sudah dekat
-        if (h.Position - target).Magnitude > CFG.wpReach then
-            setStatus(string.format("🚶 WP %d", currentWP), Color3.fromRGB(100, 160, 255))
-            hu:MoveTo(target)
-
-            local elapsed = 0
-            while elapsed < CFG.moveTimeout do
-                task.wait(0.1)
-                elapsed += 0.1
-                if not AI_ON then break end
-                local cur = hrp()
-                if cur and (cur.Position - target).Magnitude <= CFG.wpReach then break end
+        if curZone == "ISLAND" and currentWP >= 36 and currentWP <= 77 then
+            -- Di island tapi WP di range lobby → snap ke island
+            if wentLobby then
+                currentWP = nearestWP(h2.Position, 78, total)
+            else
+                currentWP = nearestWP(h2.Position, 1, 35)
             end
+            setStatus("📍 Snap ke WP island "..currentWP, Color3.fromRGB(255,200,60))
+            continue
         end
+
+        -- ──────────────────────────────────────────────────────────────────
+        --  JALAN KE WP
+        -- ──────────────────────────────────────────────────────────────────
+        local target = WAYPOINTS[currentWP]
+        setStatus(string.format("🚶 WP %d", currentWP), Color3.fromRGB(100,160,255))
+        walkTo(target, CFG.moveTimeout)
 
         if not AI_ON then break end
 
-        -- ── Collect evidence sambil lewat ─────────────────────────────────
-        tryCollectNearby()
+        -- ──────────────────────────────────────────────────────────────────
+        --  COLLECT SAMBIL LEWAT
+        -- ──────────────────────────────────────────────────────────────────
+        collectNearby()
 
-        -- ── Maju ke waypoint berikutnya ───────────────────────────────────
+        -- ──────────────────────────────────────────────────────────────────
+        --  MAJU KE WP BERIKUTNYA
+        -- ──────────────────────────────────────────────────────────────────
         currentWP += 1
     end
 
-    setStatus("⏹ Dihentikan", Color3.fromRGB(160, 160, 180))
-    wpLbl.Text = "WP: —"
+    setStatus("⏹ Dihentikan", Color3.fromRGB(160,160,180))
+    wpLbl.Text="WP: —"; zoneLbl.Text="Zona: —"
 end
 
 -- ================================================================
 --  TOMBOL
 -- ================================================================
-local C_ON  = Color3.fromRGB(15, 130, 90)
-local C_OFF = Color3.fromRGB(32, 32, 42)
+local C_ON  = Color3.fromRGB(15,130,90)
+local C_OFF = Color3.fromRGB(32,32,42)
 
 btnAI.MouseButton1Click:Connect(function()
     AI_ON = not AI_ON
     if AI_ON then
-        btnAI.Text             = "🧠  AI  :  ON"
-        btnAI.BackgroundColor3 = C_ON
+        btnAI.Text="🧠  AI  :  ON"; btnAI.BackgroundColor3=C_ON
         task.spawn(runAI)
     else
-        AI_ON = false
-        btnAI.Text             = "🧠  AI  :  OFF"
-        btnAI.BackgroundColor3 = C_OFF
-        local hu = hum(); local h = hrp()
+        btnAI.Text="🧠  AI  :  OFF"; btnAI.BackgroundColor3=C_OFF
+        local hu=hum(); local h=hrp()
         if hu and h then hu:MoveTo(h.Position) end
-        setStatus("⏹ Dihentikan", Color3.fromRGB(160, 160, 180))
-        wpLbl.Text = "WP: —"
+        setStatus("⏹ Dihentikan", Color3.fromRGB(160,160,180))
+        wpLbl.Text="WP: —"; zoneLbl.Text="Zona: —"
     end
 end)
 
-LP.CharacterAdded:Connect(function() end)
-setStatus("✅ Ready — tekan AI ON", Color3.fromRGB(80, 220, 130))
+setStatus("✅ Ready — tekan AI ON", Color3.fromRGB(80,220,130))
