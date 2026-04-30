@@ -18,15 +18,17 @@ local function getHum()
 end
 
 local CFG = {
-    maxEvidence  = 8,
-    minCycleTime = 30,
-    speed        = 100,
-    jumpPower    = 70,
-    liftWait     = 8,
-    depositWait  = 2,
-    collectDelay = 3,   -- jeda antar collect (ganti dari 0.3 ke 3)
-    tpDelay      = 0.2,
-    preDepositWait = 15, -- tunggu sebelum deposit (tambah ini)
+    maxEvidence    = 8,
+    minCycleTime   = 30,
+    speed          = 100,
+    jumpPower      = 70,
+    liftWait       = 8,
+    depositWait    = 3,
+    collectDelay   = 3,    -- jeda antar collect
+    tpDelay        = 0.3,
+    preDepositWait = 15,   -- tunggu sebelum deposit
+    -- Durasi jalan organik setelah deposit (detik)
+    organicWalkTime = 20,
 }
 
 local AI_ON        = false
@@ -39,7 +41,6 @@ local CLOSED       = false
 
 local collected   = 0
 local cycleCount  = 0
-local aiPhase     = "IDLE"
 
 local foundModels = {}
 local highlights  = {}
@@ -155,6 +156,66 @@ local function getPromptFromModel(model)
     end
 end
 
+local function doRespawn()
+    local c = LP.Character; if not c then return end
+    local h = c:FindFirstChildOfClass("Humanoid")
+    if h then h.Health = 0 end
+end
+
+-- ================================================================
+--  ORGANIC WALK
+--  Jalan ke beberapa titik acak di sekitar posisi sekarang
+--  Tujuan: simulasi aktivitas organik agar server tidak flag
+-- ================================================================
+local function organicWalk(durationSec, updateFn)
+    local hu  = getHum()
+    local hrp = getHRP()
+    if not hu or not hrp then return end
+
+    -- Force speed normal saat jalan organik (biar lebih natural)
+    hu.WalkSpeed = 16
+    hu.UseJumpPower = true
+    hu.JumpPower    = 50
+
+    local endTime = tick() + durationSec
+    local basePos = hrp.Position
+
+    while tick() < endTime and AI_ON do
+        if CLOSED then break end
+
+        -- Generate titik acak di sekitar posisi base (radius 20 stud)
+        local angle  = math.random() * math.pi * 2
+        local radius = math.random(5, 20)
+        local target = basePos + Vector3.new(
+            math.cos(angle) * radius,
+            0,
+            math.sin(angle) * radius
+        )
+
+        local remaining = endTime - tick()
+        if updateFn then
+            updateFn(string.format("Jalan organik... %.0fs", remaining))
+        end
+
+        -- Jalan ke titik
+        hu:MoveTo(target)
+        local moved = hu.MoveToFinished:Wait(4)
+
+        -- Kadang berhenti sebentar (natural pause)
+        if math.random() < 0.3 then
+            task.wait(math.random(1, 3))
+        end
+
+        task.wait(0.5)
+    end
+
+    -- Kembalikan speed ke normal sesuai setting
+    if SPEED_ON then
+        hu.WalkSpeed = CFG.speed
+        hu.JumpPower = CFG.jumpPower
+    end
+end
+
 -- ================================================================
 --  AUTO BABY
 -- ================================================================
@@ -167,7 +228,6 @@ local function fireAllBaby()
         end
     end
 end
-
 local remotes    = ReplicatedStorage:FindFirstChild("Remotes")
 local babyAction = remotes and remotes:FindFirstChild("BabyAction")
 if babyAction then
@@ -178,12 +238,6 @@ if babyAction then
             end
         end)
     end)
-end
-
-local function doRespawn()
-    local c = LP.Character; if not c then return end
-    local h = c:FindFirstChildOfClass("Humanoid")
-    if h then h.Health = 0 end
 end
 
 -- ================================================================
@@ -217,10 +271,8 @@ mainFrame.Active           = true
 mainFrame.Draggable        = true
 mainFrame.ZIndex           = 2
 Instance.new("UICorner", mainFrame).CornerRadius = UDim.new(0, 12)
-local mStroke = Instance.new("UIStroke", mainFrame)
-mStroke.Color = C.border; mStroke.Thickness = 1
+Instance.new("UIStroke", mainFrame).Color = C.border
 
--- Header
 local header = Instance.new("Frame", mainFrame)
 header.Size             = UDim2.new(1,0,0,44)
 header.BackgroundColor3 = C.bg1
@@ -233,7 +285,7 @@ hPatch.BackgroundColor3 = C.bg1; hPatch.BorderSizePixel = 0; hPatch.ZIndex = 3
 local titleTxt = Instance.new("TextLabel", header)
 titleTxt.Size = UDim2.new(1,-100,0,22); titleTxt.Position = UDim2.new(0,14,0,4)
 titleTxt.BackgroundTransparency = 1
-titleTxt.Text = "SQ Tool v12 — TP Mode"
+titleTxt.Text = "SQ Tool v12 - TP Mode"
 titleTxt.TextColor3 = C.accent; titleTxt.Font = Enum.Font.GothamBold
 titleTxt.TextSize = 13; titleTxt.TextXAlignment = Enum.TextXAlignment.Left; titleTxt.ZIndex = 4
 
@@ -258,7 +310,6 @@ closeBtn.Font = Enum.Font.GothamBold; closeBtn.TextSize = 13; closeBtn.Text = "X
 closeBtn.AutoButtonColor = false; closeBtn.BorderSizePixel = 0; closeBtn.ZIndex = 5
 Instance.new("UICorner", closeBtn).CornerRadius = UDim.new(0,6)
 
--- Float container
 local floatContainer = Instance.new("Frame", gui)
 floatContainer.Size = UDim2.new(0,44,0,98)
 floatContainer.Position = UDim2.new(0,14,0,14)
@@ -268,7 +319,7 @@ floatContainer.Visible = false; floatContainer.ZIndex = 14
 local floatBtn = Instance.new("TextButton", floatContainer)
 floatBtn.Size = UDim2.new(0,44,0,44)
 floatBtn.BackgroundColor3 = C.bg1; floatBtn.TextColor3 = C.accent
-floatBtn.Font = Enum.Font.GothamBold; floatBtn.TextSize = 20; floatBtn.Text = "SQ"
+floatBtn.Font = Enum.Font.GothamBold; floatBtn.TextSize = 16; floatBtn.Text = "SQ"
 floatBtn.AutoButtonColor = false; floatBtn.BorderSizePixel = 0; floatBtn.ZIndex = 15
 Instance.new("UICorner", floatBtn).CornerRadius = UDim.new(0,10)
 Instance.new("UIStroke", floatBtn).Color = C.border
@@ -287,7 +338,6 @@ local function updateMiniAI()
     miniAiStroke.Color         = AI_ON and C.ok    or C.border
 end
 
--- Status
 local statusBar = Instance.new("Frame", mainFrame)
 statusBar.Size = UDim2.new(1,-16,0,22); statusBar.Position = UDim2.new(0,8,0,50)
 statusBar.BackgroundColor3 = C.bg2; statusBar.BorderSizePixel = 0; statusBar.ZIndex = 3
@@ -299,7 +349,6 @@ statusTxt.BackgroundTransparency = 1; statusTxt.Text = "Ready"
 statusTxt.TextColor3 = C.dim; statusTxt.Font = Enum.Font.Gotham
 statusTxt.TextSize = 10; statusTxt.TextXAlignment = Enum.TextXAlignment.Left; statusTxt.ZIndex = 4
 
--- Info row
 local infoRow = Instance.new("Frame", mainFrame)
 infoRow.Size = UDim2.new(1,-16,0,20); infoRow.Position = UDim2.new(0,8,0,76)
 infoRow.BackgroundTransparency = 1; infoRow.ZIndex = 3
@@ -316,23 +365,21 @@ cycleTxt.BackgroundTransparency = 1; cycleTxt.Text = "Siklus: 0"
 cycleTxt.TextColor3 = C.dim; cycleTxt.Font = Enum.Font.Gotham
 cycleTxt.TextSize = 10; cycleTxt.TextXAlignment = Enum.TextXAlignment.Right; cycleTxt.ZIndex = 4
 
--- Timer bar
 local timerBar = Instance.new("Frame", mainFrame)
-timerBar.Size = UDim2.new(1,-16,0,20); timerBar.Position = UDim2.new(0,8,0,100)
+timerBar.Size = UDim2.new(1,-16,0,18); timerBar.Position = UDim2.new(0,8,0,100)
 timerBar.BackgroundTransparency = 1; timerBar.ZIndex = 3
 
 local timerTxt = Instance.new("TextLabel", timerBar)
 timerTxt.Size = UDim2.new(1,0,1,0); timerTxt.BackgroundTransparency = 1
-timerTxt.Text = "Timer: -"; timerTxt.TextColor3 = C.dim
+timerTxt.Text = ""; timerTxt.TextColor3 = C.warn
 timerTxt.Font = Enum.Font.Gotham; timerTxt.TextSize = 10
 timerTxt.TextXAlignment = Enum.TextXAlignment.Left; timerTxt.ZIndex = 4
 
 local divLine = Instance.new("Frame", mainFrame)
-divLine.Size = UDim2.new(1,-16,0,1); divLine.Position = UDim2.new(0,8,0,124)
+divLine.Size = UDim2.new(1,-16,0,1); divLine.Position = UDim2.new(0,8,0,122)
 divLine.BackgroundColor3 = C.border; divLine.BorderSizePixel = 0; divLine.ZIndex = 3
 
--- Toggle rows
-local ROW_H = 34; local ROW_GAP = 4; local ROW_Y = 132
+local ROW_H = 34; local ROW_GAP = 4; local ROW_Y = 130
 local function mkRow(label, icon, yPos)
     local row = Instance.new("Frame", mainFrame)
     row.Size = UDim2.new(1,-16,0,ROW_H); row.Position = UDim2.new(0,8,0,yPos)
@@ -392,7 +439,6 @@ hintTxt.BackgroundTransparency = 1; hintTxt.Text = "RightCtrl = hide/show"
 hintTxt.TextColor3 = Color3.fromRGB(35,35,45); hintTxt.Font = Enum.Font.Gotham
 hintTxt.TextSize = 9; hintTxt.TextXAlignment = Enum.TextXAlignment.Left; hintTxt.ZIndex = 3
 
--- Confirm close
 local confirmFrame = Instance.new("Frame", gui)
 confirmFrame.Size = UDim2.new(0,220,0,100); confirmFrame.Position = UDim2.new(0.5,-110,0.5,-50)
 confirmFrame.BackgroundColor3 = C.bg1; confirmFrame.BorderSizePixel = 0
@@ -435,7 +481,7 @@ local function updateCycle(n)
     cycleTxt.Text = "Siklus: " .. n
 end
 local function updateTimer(t)
-    timerTxt.Text = "Timer: " .. math.floor(t) .. "s"
+    timerTxt.Text = string.format("%.0fs", t)
 end
 
 -- ================================================================
@@ -506,14 +552,28 @@ end)
 respawnBtn.MouseButton1Click:Connect(doRespawn)
 
 -- ================================================================
---  MAIN AI — PURE TELEPORT
+--  COUNTDOWN helper
+-- ================================================================
+local function countdown(sec, label)
+    local endTime = tick() + sec
+    while tick() < endTime and AI_ON do
+        local rem = endTime - tick()
+        updateStatus(string.format("%s %.0fs...", label, rem), C.warn)
+        updateTimer(rem)
+        task.wait(0.5)
+    end
+    timerTxt.Text = ""
+end
+
+-- ================================================================
+--  MAIN AI — PURE TELEPORT + ORGANIC ACTIVITY
 -- ================================================================
 local function runAI()
     collected  = 0
     cycleCount = 0
     updateCount(0)
     updateCycle(0)
-    updateStatus("AI start - pure TP mode", C.info)
+    updateStatus("AI start", C.info)
     task.wait(1)
 
     while AI_ON do
@@ -523,49 +583,34 @@ local function runAI()
         cycleCount += 1
         updateCycle(cycleCount)
 
-        -- ════════════════════════════════
-        --  STEP 1: TP ke lift Lobby + klik
-        -- ════════════════════════════════
-        updateStatus("Step 1: Cari lift Lobby...", C.info)
+        -- ════════ STEP 1: Lift ke Lobby ════════
+        updateStatus("Step 1: Lift Lobby...", C.info)
         local liftPr, liftPos = findPromptByText("Lobby")
         if not liftPr then
-            updateStatus("Lift Lobby tidak ditemukan, tunggu...", C.warn)
+            updateStatus("Lift Lobby tidak ditemukan", C.warn)
             task.wait(3); continue
         end
-
         tpTo(liftPos)
-        updateStatus("Klik lift Lobby...", C.info)
         firePrompt(liftPr)
-        task.wait(CFG.liftWait)
+        countdown(CFG.liftWait, "Naik lift")
         if not AI_ON then break end
 
-        -- ════════════════════════════════
-        --  STEP 2: Collect di Lobby (TP per item)
-        -- ════════════════════════════════
-        updateStatus("Step 2: Collect evidence di Lobby...", C.ok)
+        -- ════════ STEP 2: Collect evidence di Lobby ════════
+        updateStatus("Step 2: Collect evidence...", C.ok)
         collected = 0
         updateCount(0)
 
-        local maxAttempts = 30  -- batas loop biar tidak infinite
-        local attempt     = 0
-
+        local attempt = 0
         while collected < CFG.maxEvidence and AI_ON do
             if CLOSED then break end
             attempt += 1
-            if attempt > maxAttempts then
-                updateStatus("Max attempt tercapai, lanjut deposit", C.warn)
-                break
-            end
+            if attempt > 40 then break end
 
             local folder = getEvidenceFolder()
-            if not folder then
-                updateStatus("Folder evidence tidak ada", C.warn)
-                task.wait(1); continue
-            end
+            if not folder then task.wait(1); continue end
 
-            -- Kumpulkan semua evidence yang ada
-            local evList = {}
-            local hrpNow = getHRP()
+            local evList  = {}
+            local hrpNow  = getHRP()
             for _, model in ipairs(folder:GetChildren()) do
                 local pr = getPromptFromModel(model)
                 if pr then
@@ -582,96 +627,82 @@ local function runAI()
                 task.wait(2); continue
             end
 
-            -- Sort by jarak
             table.sort(evList, function(a, b) return a.d < b.d end)
             local ev = evList[1]
 
-            updateStatus(string.format("Collect [%d/%d]: %s", collected+1, CFG.maxEvidence, ev.name), C.ok)
-
-            -- TP ke evidence
+            updateStatus(string.format("Collect [%d/%d] %s", collected+1, CFG.maxEvidence, ev.name), C.ok)
             tpTo(ev.pos)
-            task.wait(0.1)
-
-            -- Fire prompt
+            task.wait(0.2)
             local ok = pcall(function() fireproximityprompt(ev.pr) end)
             if ok then
                 collected += 1
                 updateCount(collected)
             end
 
-            task.wait(CFG.collectDelay)
+            -- Jeda 3 detik antar collect
+            countdown(CFG.collectDelay, "Jeda collect")
         end
 
         if not AI_ON then break end
 
-        -- ════════════════════════════════
-        --  STEP 3: TP ke lift Facility + klik
-        -- ════════════════════════════════
-        updateStatus("Step 3: Cari lift Facility...", C.info)
+        -- ════════ STEP 3: Lift ke Island ════════
+        updateStatus("Step 3: Lift Facility...", C.info)
         local facPr, facPos = findPromptByText("Facility")
-        if not facPr then
-            updateStatus("Lift Facility tidak ditemukan, tunggu...", C.warn)
+        if facPr then
+            tpTo(facPos)
+            firePrompt(facPr)
+            countdown(CFG.liftWait, "Turun lift")
+        else
+            updateStatus("Lift Facility tidak ditemukan", C.warn)
+            task.wait(3)
+        end
+        if not AI_ON then break end
+
+        -- ════════ STEP 4: Jalan organik dulu sebelum deposit ════════
+        -- Ini yang penting: simulasi aktivitas natural agar server
+        -- tidak flag sebagai bot — jalan acak 20 detik
+        updateStatus("Jalan organik (anti-flag)...", C.warn)
+        organicWalk(CFG.organicWalkTime, updateStatus)
+        if not AI_ON then break end
+
+        -- ════════ STEP 5: Deposit + tunggu 15 detik ════════
+        updateStatus("Step 5: Menuju deposit...", C.info)
+        local depPr, depPos = findPromptByText("Deposit Evidence")
+        if not depPr then
+            updateStatus("Deposit prompt tidak ditemukan", C.warn)
             task.wait(3)
         else
-            tpTo(facPos)
-            updateStatus("Klik lift Facility...", C.info)
-            firePrompt(facPr)
-            task.wait(CFG.liftWait)
+            tpTo(depPos)
+
+            -- Tunggu 15 detik di dekat deposit sebelum klik
+            -- Server butuh "dwell time" sebelum accept deposit
+            countdown(CFG.preDepositWait, "Menunggu sebelum deposit")
+            if not AI_ON then break end
+
+            updateStatus("Deposit " .. collected .. " evidence...", C.ok)
+            task.wait(0.3)
+            firePrompt(depPr)
+            task.wait(CFG.depositWait)
+            updateStatus("Deposit selesai! Siklus " .. cycleCount, C.ok)
         end
 
         if not AI_ON then break end
 
-        -- ════════════════════════════════
-        --  STEP 4: TP ke Deposit Evidence + klik
-        -- ════════════════════════════════
-      -- STEP 4: TP ke Deposit Evidence + klik
-updateStatus("Step 4: Cari Deposit Evidence...", C.info)
-local depPr, depPos = findPromptByText("Deposit Evidence")
-if not depPr then
-    updateStatus("Deposit prompt tidak ditemukan, tunggu...", C.warn)
-    task.wait(3)
-else
-    tpTo(depPos)
-
-    -- Tunggu 15 detik dulu sebelum deposit
-    updateStatus("Menunggu 15 detik sebelum deposit...", C.warn)
-    local waitEnd = tick() + CFG.preDepositWait
-    while tick() < waitEnd and AI_ON do
-        updateTimer(waitEnd - tick())
-        task.wait(0.5)
-    end
-
-    updateStatus("Deposit " .. collected .. " evidence...", C.ok)
-    task.wait(0.3)
-    firePrompt(depPr)
-    task.wait(CFG.depositWait)
-    updateStatus("Deposit selesai!", C.ok)
-end
-
-        if not AI_ON then break end
-
-        -- ════════════════════════════════
-        --  Pastikan minimal 30 detik per siklus
-        -- ════════════════════════════════
-        local elapsed = tick() - cycleStart
+        -- ════════ Pastikan min 30 detik total ════════
+        local elapsed   = tick() - cycleStart
         local remaining = CFG.minCycleTime - elapsed
-
         if remaining > 0 then
-            updateStatus(string.format("Cooldown %.0fs...", remaining), C.warn)
-            local endTime = tick() + remaining
-            while tick() < endTime and AI_ON do
-                updateTimer(endTime - tick())
-                task.wait(0.5)
-            end
+            countdown(remaining, "Cooldown siklus")
         end
 
-        timerTxt.Text = "Timer: -"
+        timerTxt.Text = ""
         collected = 0
         updateCount(0)
-        task.wait(0.5)
+        task.wait(1)
     end
 
     updateStatus("AI stop", C.dim)
+    timerTxt.Text = ""
     updateMiniAI()
 end
 
@@ -683,18 +714,18 @@ local function toggleAI()
     setPill(aiPill, AI_ON)
     updateMiniAI()
     if AI_ON then
-        updateStatus("AI aktif - TP Mode", C.info)
+        updateStatus("AI aktif", C.info)
         task.spawn(runAI)
     else
         updateStatus("AI stop", C.dim)
-        timerTxt.Text = "Timer: -"
+        timerTxt.Text = ""
     end
 end
 aiBtn.MouseButton1Click:Connect(toggleAI)
 miniAiBtn.MouseButton1Click:Connect(toggleAI)
 
 -- ================================================================
---  SCAN LOOP (highlight saja)
+--  SCAN LOOP
 -- ================================================================
 task.spawn(function()
     while true do
