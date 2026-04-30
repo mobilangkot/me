@@ -240,10 +240,10 @@ local CFG = {
     scanInterval   = 0.5,
 
     -- Speed tiers
-    speedFlat      = 120,  -- datar / turun (naik sedikit dari 100)
+    speedFlat      = 100,  -- datar / turun (naik sedikit dari 100)
     speedSlope     = 65,   -- nanjak sedang
     speedSteep     = 32,   -- nanjak curam
-    jumpNormal     = 50,   -- jump dinormalkan saat AI farming
+    jumpNormal     = 25,   -- jump dinormalkan saat AI farming
     jumpSlope      = 50,   -- sama, tidak dikurangi
     jumpSteep      = 50,   -- sama
 
