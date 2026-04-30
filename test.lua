@@ -1,22 +1,18 @@
--- ============================================================
---  AI FARMING v3  —  Pure Waypoint MoveTo (no pathfinding)
---  Jalur ikut waypoint recorder persis, tidak ada pathfinding
---  yang bikin kedut / lurus bypass jalur.
---
---  CARA PAKAI:
---  1. Paste hasil recorder ke WAYPOINT_DATA di bawah
---  2. Isi SECTION_START sesuai index awal tiap section
---  3. Scan prompt → Start AI
--- ============================================================
+-- ================================================================
+--  AI FARMING v4  —  WAYPOINT FIRST, COLLECT SAMBIL LEWAT
+--  Karakter SELALU ikuti waypoint rekaman.
+--  Evidence diambil hanya kalau ada dalam radius X studs
+--  dari posisi karakter SAAT INI (sambil lewat).
+--  Tidak ada pathfinding. Tidak ada fallback loncat-loncat.
+-- ================================================================
 
 local Players          = game:GetService("Players")
 local UserInputService = game:GetService("UserInputService")
+local LP               = Players.LocalPlayer
 
-local LP = Players.LocalPlayer
-
--- ============================================================
---  PASTE WAYPOINTS DI SINI (hasil Generate & Copy dari recorder)
--- ============================================================
+-- ================================================================
+--  PASTE WAYPOINTS HASIL RECORDER DI SINI
+-- ================================================================
 local WAYPOINTS = {
     -- === Boat → Lift Lobby ===
     Vector3.new(-2844.08, -786.00, 15535.26), -- 1
@@ -141,659 +137,514 @@ local WAYPOINTS = {
     Vector3.new(-2875.53, -787.19, 15550.73), -- 117
 }
 
--- Index awal tiap section di WAYPOINT_DATA
--- Lihat komentar "-- ===" di output recorder untuk tahu index-nya
-local SECTION_START = {
-    ["Boat → Lift Lobby"]            = 1,
-    ["Lobby → Area Evidence"]        = 1,  -- ganti sesuai index kamu
-    ["Area Evidence → Lift Island"]  = 1,  -- ganti sesuai index kamu
-    ["Lift Island → Boat"]           = 1,  -- ganti sesuai index kamu
+-- Index awal tiap section (lihat angka di komentar output recorder)
+-- Contoh: kalau "Lobby → Area Evidence" mulai di baris ke-18:
+--   ["Lobby → Area Evidence"] = 18,
+local SEC = {
+    ["Boat → Lift Lobby"]           = 1,
+    ["Lobby → Area Evidence"]       = 1,  -- ← ganti
+    ["Area Evidence → Lift Island"] = 1,  -- ← ganti
+    ["Lift Island → Boat"]          = 1,  -- ← ganti
 }
 
--- ============================================================
---  CONFIG
--- ============================================================
-local MAX_COL        = 8     -- max evidence per cycle
-local WP_REACH       = 5     -- radius "sampai" per waypoint (studs)
-local COLLECT_RADIUS = 20    -- radius collect evidence dari posisi saat ini
-local PROMPT_REACH   = 8     -- jarak max trigger proximity prompt
-local LIFT_WAIT      = 5     -- detik tunggu lift
-local DEPOSIT_WAIT   = 4     -- detik tunggu deposit
-local MOVETO_TIMEOUT = 3     -- detik timeout per waypoint MoveTo
+-- ================================================================
+--  CONFIG — ubah sesuai kebutuhan
+-- ================================================================
+local CFG = {
+    maxEvidence    = 8,    -- target evidence per cycle
+    collectRadius  = 15,   -- studs — ambil evidence kalau sedekat ini dari jalur
+    promptReach    = 7,    -- studs — jarak fire proximity prompt
+    wpReach        = 4,    -- studs — dianggap "sampai" di waypoint
+    moveTimeout    = 4,    -- detik max per waypoint sebelum skip
+    liftWait       = 5,    -- detik tunggu setelah trigger lift
+    depositWait    = 3,    -- detik tunggu setelah deposit
+}
 
--- ============================================================
+-- ================================================================
 --  STATE
--- ============================================================
+-- ================================================================
 local AI_ON     = false
 local COL_COUNT = 0
+local savedP    = { deposit=nil, lobby=nil, facility=nil }
+local savedPos  = { deposit=nil, lobby=nil, facility=nil }
 
-local savedPrompts = { deposit = nil, lobby = nil, facility = nil }
-local savedPos     = { deposit = nil, lobby = nil, facility = nil }
-
--- ============================================================
+-- ================================================================
 --  HELPERS
--- ============================================================
-local function getChar() return LP.Character end
-local function getHRP()
-    local c = getChar()
-    if not c then return nil end
+-- ================================================================
+local function ch()  return LP.Character end
+local function hrp()
+    local c = ch(); if not c then return nil end
     return c:FindFirstChild("HumanoidRootPart")
         or c:FindFirstChild("UpperTorso")
         or c:FindFirstChild("Torso")
 end
-local function getHum()
-    local c = getChar()
+local function hum()
+    local c = ch()
     return c and c:FindFirstChildOfClass("Humanoid")
 end
+local function dist(a, b) return (a - b).Magnitude end
 
--- Ambil slice waypoints untuk satu section
-local function getSectionWP(sectionName)
-    -- Urutkan section berdasarkan index start
-    local ordered = {}
-    for name, idx in pairs(SECTION_START) do
-        table.insert(ordered, { name = name, idx = idx })
-    end
-    table.sort(ordered, function(a, b) return a.idx < b.idx end)
+-- Slice WAYPOINTS untuk satu section
+local function secWP(name)
+    local order = {}
+    for k, v in pairs(SEC) do table.insert(order, {k=k, v=v}) end
+    table.sort(order, function(a,b) return a.v < b.v end)
 
-    local startIdx, endIdx = nil, #WAYPOINT_DATA
-    for i, entry in ipairs(ordered) do
-        if entry.name == sectionName then
-            startIdx = entry.idx
-            if ordered[i + 1] then
-                endIdx = ordered[i + 1].idx - 1
-            end
+    local si, ei = nil, #WAYPOINTS
+    for i, e in ipairs(order) do
+        if e.k == name then
+            si = e.v
+            if order[i+1] then ei = order[i+1].v - 1 end
             break
         end
     end
+    if not si then return {} end
 
-    if not startIdx then return {} end
-
-    local result = {}
-    for i = startIdx, endIdx do
-        if WAYPOINT_DATA[i] then
-            table.insert(result, WAYPOINT_DATA[i])
-        end
+    local r = {}
+    for i = si, ei do
+        if WAYPOINTS[i] then r[#r+1] = WAYPOINTS[i] end
     end
-    return result
+    return r
 end
 
--- ============================================================
+-- ================================================================
 --  GUI
--- ============================================================
-local gui = Instance.new("ScreenGui", LP:WaitForChild("PlayerGui"))
-gui.Name         = "AIFarming_v3"
-gui.ResetOnSpawn = false
+-- ================================================================
+local gui   = Instance.new("ScreenGui", LP:WaitForChild("PlayerGui"))
+gui.Name    = "AIv4"; gui.ResetOnSpawn = false
 
 local frame = Instance.new("Frame", gui)
-frame.Size             = UDim2.new(0, 300, 0, 480)
-frame.Position         = UDim2.new(0, 10, 0, 10)
-frame.BackgroundColor3 = Color3.fromRGB(13, 13, 17)
+frame.Size             = UDim2.new(0,290,0,420)
+frame.Position         = UDim2.new(0,10,0,10)
+frame.BackgroundColor3 = Color3.fromRGB(13,13,17)
 frame.BorderSizePixel  = 0
 frame.Active           = true
 frame.Draggable        = true
-Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 12)
+Instance.new("UICorner",frame).CornerRadius = UDim.new(0,12)
 
--- Accent strip
-local accent = Instance.new("Frame", frame)
-accent.Size             = UDim2.new(1, 0, 0, 3)
-accent.BackgroundColor3 = Color3.fromRGB(30, 180, 120)
-accent.BorderSizePixel  = 0
-accent.ZIndex           = 5
-Instance.new("UICorner", accent).CornerRadius = UDim.new(0, 12)
-
--- Title bar
-local titleBar = Instance.new("Frame", frame)
-titleBar.Size             = UDim2.new(1, 0, 0, 40)
-titleBar.Position         = UDim2.new(0, 0, 0, 3)
-titleBar.BackgroundColor3 = Color3.fromRGB(18, 18, 24)
-titleBar.BorderSizePixel  = 0
-titleBar.ZIndex           = 4
-
-local titleLbl = Instance.new("TextLabel", titleBar)
-titleLbl.Size              = UDim2.new(1, -12, 0, 21)
-titleLbl.Position          = UDim2.new(0, 12, 0, 4)
-titleLbl.BackgroundTransparency = 1
-titleLbl.TextColor3        = Color3.fromRGB(255, 255, 255)
-titleLbl.Font              = Enum.Font.GothamBold
-titleLbl.TextSize          = 14
-titleLbl.TextXAlignment    = Enum.TextXAlignment.Left
-titleLbl.Text              = "🧠  AI Farming v3"
-titleLbl.ZIndex            = 5
-
-local subLbl = Instance.new("TextLabel", titleBar)
-subLbl.Size              = UDim2.new(1, -12, 0, 13)
-subLbl.Position          = UDim2.new(0, 12, 0, 24)
-subLbl.BackgroundTransparency = 1
-subLbl.TextColor3        = Color3.fromRGB(30, 180, 120)
-subLbl.Font              = Enum.Font.Gotham
-subLbl.TextSize          = 11
-subLbl.TextXAlignment    = Enum.TextXAlignment.Left
-subLbl.Text              = "Pure Waypoint — No Pathfinding"
-subLbl.ZIndex            = 5
-
--- Info bars
-local function makeInfoBar(posY, h)
-    local b = Instance.new("Frame", frame)
-    b.Size             = UDim2.new(1, -16, 0, h or 24)
-    b.Position         = UDim2.new(0, 8, 0, posY)
-    b.BackgroundColor3 = Color3.fromRGB(18, 18, 26)
-    b.BorderSizePixel  = 0
-    b.ZIndex           = 3
-    Instance.new("UICorner", b).CornerRadius = UDim.new(0, 7)
-    return b
+local function stripe(col)
+    local f = Instance.new("Frame",frame)
+    f.Size=UDim2.new(1,0,0,3); f.BackgroundColor3=col
+    f.BorderSizePixel=0; f.ZIndex=5
+    Instance.new("UICorner",f).CornerRadius=UDim.new(0,12)
 end
-local function makeInfoLabel(parent, col, size)
-    local l = Instance.new("TextLabel", parent)
-    l.Size               = UDim2.new(1, -10, 1, 0)
-    l.Position           = UDim2.new(0, 8, 0, 0)
-    l.BackgroundTransparency = 1
-    l.TextColor3         = col or Color3.fromRGB(160, 160, 180)
-    l.Font               = Enum.Font.Gotham
-    l.TextSize           = size or 11
-    l.TextXAlignment     = Enum.TextXAlignment.Left
-    l.ZIndex             = 4
+stripe(Color3.fromRGB(30,180,120))
+
+local tb = Instance.new("Frame",frame)
+tb.Size=UDim2.new(1,0,0,38); tb.Position=UDim2.new(0,0,0,3)
+tb.BackgroundColor3=Color3.fromRGB(18,18,24); tb.BorderSizePixel=0; tb.ZIndex=4
+
+local function lbl(parent,txt,x,y,w,h,col,font,sz,ax)
+    local l=Instance.new("TextLabel",parent)
+    l.Position=UDim2.new(0,x,0,y); l.Size=UDim2.new(0,w,0,h)
+    l.BackgroundTransparency=1; l.Text=txt
+    l.TextColor3=col or Color3.fromRGB(200,200,200)
+    l.Font=font or Enum.Font.Gotham; l.TextSize=sz or 11
+    l.TextXAlignment=ax or Enum.TextXAlignment.Left; l.ZIndex=5
     return l
 end
 
-local statusBar  = makeInfoBar(50, 26)
-local statusLbl  = makeInfoLabel(statusBar, Color3.fromRGB(160, 160, 180))
-statusLbl.Text   = "Idle"
+lbl(tb,"🧠  AI Farming v4",12,5,260,18,Color3.fromRGB(255,255,255),Enum.Font.GothamBold,13)
+lbl(tb,"Waypoint-First  •  Collect Sambil Lewat",12,23,260,13,Color3.fromRGB(30,180,120),Enum.Font.Gotham,10)
 
-local countBar   = makeInfoBar(82, 22)
-local countLbl   = makeInfoLabel(countBar, Color3.fromRGB(80, 220, 130), 11)
-countLbl.Font    = Enum.Font.GothamBold
-countLbl.Text    = "Evidence: 0 / " .. MAX_COL
-
-local phaseBar   = makeInfoBar(110, 22)
-local phaseLbl   = makeInfoLabel(phaseBar, Color3.fromRGB(255, 220, 60))
-phaseLbl.Text    = "Phase: —"
-
-local wpBar      = makeInfoBar(138, 22)
-local wpLbl      = makeInfoLabel(wpBar, Color3.fromRGB(140, 140, 200), 10)
-wpLbl.Font       = Enum.Font.Code
-wpLbl.Text       = "WP: —"
-
--- Prompt panel
-local posPanel = Instance.new("Frame", frame)
-posPanel.Size             = UDim2.new(1, -16, 0, 80)
-posPanel.Position         = UDim2.new(0, 8, 0, 168)
-posPanel.BackgroundColor3 = Color3.fromRGB(16, 16, 22)
-posPanel.BorderSizePixel  = 0
-posPanel.ZIndex           = 3
-Instance.new("UICorner", posPanel).CornerRadius = UDim.new(0, 8)
-
-local function makePromptLbl(posY, txt)
-    local l = Instance.new("TextLabel", posPanel)
-    l.Position           = UDim2.new(0, 8, 0, posY)
-    l.Size               = UDim2.new(1, -8, 0, 18)
-    l.BackgroundTransparency = 1
-    l.TextColor3         = Color3.fromRGB(100, 100, 120)
-    l.Font               = Enum.Font.Gotham
-    l.TextSize           = 11
-    l.TextXAlignment     = Enum.TextXAlignment.Left
-    l.Text               = "  ❌  " .. txt
-    l.ZIndex             = 4
+local function infoBar(posY, h)
+    local b=Instance.new("Frame",frame)
+    b.Size=UDim2.new(1,-16,0,h or 22)
+    b.Position=UDim2.new(0,8,0,posY)
+    b.BackgroundColor3=Color3.fromRGB(18,18,26)
+    b.BorderSizePixel=0; b.ZIndex=3
+    Instance.new("UICorner",b).CornerRadius=UDim.new(0,6)
+    local l=Instance.new("TextLabel",b)
+    l.Size=UDim2.new(1,-8,1,0); l.Position=UDim2.new(0,6,0,0)
+    l.BackgroundTransparency=1; l.TextXAlignment=Enum.TextXAlignment.Left
+    l.ZIndex=4; l.TextSize=11; l.Font=Enum.Font.Gotham
+    l.TextColor3=Color3.fromRGB(160,160,180); l.Text=""
     return l
 end
-local ptHdr = makePromptLbl(4, "")
-ptHdr.Text      = "Prompt Status:"
-ptHdr.TextColor3 = Color3.fromRGB(120, 120, 140)
-ptHdr.Font      = Enum.Font.GothamBold
 
-local lblDeposit  = makePromptLbl(22, "Deposit Evidence")
-local lblLobby    = makePromptLbl(42, "Lobby (Lift)")
-local lblFacility = makePromptLbl(62, "Facility (Lift)")
+local lblStatus = infoBar(48, 24)
+local lblCount  = infoBar(78, 20); lblCount.Font=Enum.Font.GothamBold
+lblCount.TextColor3=Color3.fromRGB(80,220,130)
+local lblPhase  = infoBar(104, 20)
+lblPhase.TextColor3=Color3.fromRGB(255,220,60)
+local lblWP     = infoBar(130, 18); lblWP.Font=Enum.Font.Code
+lblWP.TextColor3=Color3.fromRGB(140,140,200); lblWP.TextSize=10
+
+-- Prompt status panel
+local pp = Instance.new("Frame",frame)
+pp.Size=UDim2.new(1,-16,0,72); pp.Position=UDim2.new(0,8,0,155)
+pp.BackgroundColor3=Color3.fromRGB(16,16,22); pp.BorderSizePixel=0; pp.ZIndex=3
+Instance.new("UICorner",pp).CornerRadius=UDim.new(0,8)
+lbl(pp,"Prompt Status:",8,4,200,14,Color3.fromRGB(120,120,140),Enum.Font.GothamBold,10)
+local pDeposit  = lbl(pp,"  ❌  Deposit Evidence",8,20,260,14,Color3.fromRGB(100,100,120))
+local pLobby    = lbl(pp,"  ❌  Lobby (Lift)",    8,38,260,14,Color3.fromRGB(100,100,120))
+local pFacility = lbl(pp,"  ❌  Facility (Lift)",  8,54,260,14,Color3.fromRGB(100,100,120))
 
 -- Buttons
-local C_TEAL  = Color3.fromRGB(15, 130, 90)
-local C_GREY  = Color3.fromRGB(32, 32, 42)
-local C_AMBER = Color3.fromRGB(160, 110, 10)
-local C_RED   = Color3.fromRGB(160, 25, 25)
-
-local function newBtn(text, posY, col)
-    local b = Instance.new("TextButton", frame)
-    b.Size             = UDim2.new(1, -16, 0, 32)
-    b.Position         = UDim2.new(0, 8, 0, posY)
-    b.BackgroundColor3 = col
-    b.TextColor3       = Color3.new(1, 1, 1)
-    b.Font             = Enum.Font.GothamBold
-    b.TextSize         = 12
-    b.Text             = text
-    b.AutoButtonColor  = false
-    b.BorderSizePixel  = 0
-    b.ZIndex           = 3
-    Instance.new("UICorner", b).CornerRadius = UDim.new(0, 8)
+local function btn(text, posY, col)
+    local b=Instance.new("TextButton",frame)
+    b.Size=UDim2.new(1,-16,0,30); b.Position=UDim2.new(0,8,0,posY)
+    b.BackgroundColor3=col; b.TextColor3=Color3.new(1,1,1)
+    b.Font=Enum.Font.GothamBold; b.TextSize=12; b.Text=text
+    b.AutoButtonColor=false; b.BorderSizePixel=0; b.ZIndex=3
+    Instance.new("UICorner",b).CornerRadius=UDim.new(0,8)
     return b
 end
 
-local btnScan     = newBtn("🔍  Scan Prompt Otomatis",     256, C_TEAL)
-local btnDeposit2 = newBtn("📍  Simpan: Deposit Evidence", 294, C_GREY)
-local btnLobby2   = newBtn("📍  Simpan: Lobby Lift",       332, C_GREY)
-local btnFacility2= newBtn("📍  Simpan: Facility Lift",    370, C_GREY)
-local btnAI       = newBtn("🧠  AI Farming  :  OFF",       408, C_GREY)
-local btnStop     = newBtn("⏹  Stop",                      446, C_RED)
+local TEAL  = Color3.fromRGB(15,130,90)
+local GREY  = Color3.fromRGB(32,32,42)
+local AMBER = Color3.fromRGB(160,110,10)
+local RED   = Color3.fromRGB(160,25,25)
 
-local hint = Instance.new("TextLabel", frame)
-hint.Size               = UDim2.new(1, -16, 0, 14)
-hint.Position           = UDim2.new(0, 8, 1, -16)
-hint.BackgroundTransparency = 1
-hint.TextColor3         = Color3.fromRGB(50, 50, 65)
-hint.Font               = Enum.Font.Gotham
-hint.TextSize           = 10
-hint.TextXAlignment     = Enum.TextXAlignment.Left
-hint.Text               = "RightCtrl = hide/show"
-hint.ZIndex             = 3
+local bScan     = btn("🔍  Scan Prompt",          235, TEAL)
+local bDeposit  = btn("📍  Simpan: Deposit",       271, GREY)
+local bLobby    = btn("📍  Simpan: Lobby Lift",    307, GREY)
+local bFacility = btn("📍  Simpan: Facility Lift", 343, GREY)
+local bAI       = btn("🧠  AI  :  OFF",            379, GREY)
+local bStop     = btn("⏹  Stop",                   415, RED)
 
-UserInputService.InputBegan:Connect(function(input, gp)
-    if not gp and input.KeyCode == Enum.KeyCode.RightControl then
+lbl(frame,"RightCtrl = hide/show",8,0,260,14,Color3.fromRGB(50,50,65),Enum.Font.Gotham,9)
+    :Clone().Parent = frame  -- dummy, posisi di bawah
+
+local hint2 = Instance.new("TextLabel",frame)
+hint2.Size=UDim2.new(1,-16,0,12); hint2.Position=UDim2.new(0,8,1,-13)
+hint2.BackgroundTransparency=1; hint2.Text="RightCtrl = hide/show"
+hint2.TextColor3=Color3.fromRGB(50,50,65); hint2.Font=Enum.Font.Gotham
+hint2.TextSize=9; hint2.TextXAlignment=Enum.TextXAlignment.Left; hint2.ZIndex=3
+
+UserInputService.InputBegan:Connect(function(i,gp)
+    if not gp and i.KeyCode==Enum.KeyCode.RightControl then
         gui.Enabled = not gui.Enabled
     end
 end)
 
--- ============================================================
---  GUI UPDATERS
--- ============================================================
-local function setStatus(txt, col)
-    statusLbl.Text       = txt
-    statusLbl.TextColor3 = col or Color3.fromRGB(160, 160, 180)
-end
-local function setPhase(txt, col)
-    phaseLbl.Text       = "Phase: " .. txt
-    phaseLbl.TextColor3 = col or Color3.fromRGB(255, 220, 60)
-end
-local function setWP(txt)
-    wpLbl.Text = "WP: " .. txt
-end
-local function setCount(n)
-    countLbl.Text = "Evidence: " .. n .. " / " .. MAX_COL
-end
-local function markPrompt(lbl, found)
-    local raw = lbl.Text:match("  [✅❌]  (.+)$") or ""
-    lbl.Text       = (found and "  ✅  " or "  ❌  ") .. raw
-    lbl.TextColor3 = found and Color3.fromRGB(80,220,130) or Color3.fromRGB(100,100,120)
+-- ================================================================
+--  GUI UPDATE HELPERS
+-- ================================================================
+local function setStatus(t, col) lblStatus.Text=t; lblStatus.TextColor3=col or Color3.fromRGB(160,160,180) end
+local function setPhase(t, col)  lblPhase.Text="▶ "..t; lblPhase.TextColor3=col or Color3.fromRGB(255,220,60) end
+local function setWP(t)          lblWP.Text="WP: "..t end
+local function setCount(n)       lblCount.Text="Evidence: "..n.." / "..CFG.maxEvidence end
+
+local function markPrompt(lbl2, name, found)
+    lbl2.Text      = (found and "  ✅  " or "  ❌  ") .. name
+    lbl2.TextColor3 = found and Color3.fromRGB(80,220,130) or Color3.fromRGB(100,100,120)
 end
 
--- ============================================================
---  CORE: WALK WAYPOINTS — pure MoveTo, smooth, tidak kedut
---  Karakter jalan lurus dari titik ke titik sesuai rekaman.
---  Tidak ada pathfind = tidak ada recompute = tidak kedut.
--- ============================================================
-local function walkWaypoints(wpList, label)
-    if not wpList or #wpList == 0 then return true end
-
-    local total = #wpList
-    setPhase(label or "Walking", Color3.fromRGB(255, 220, 60))
-
-    for i, target in ipairs(wpList) do
-        if not AI_ON then return false end
-
-        local hrp = getHRP()
-        local hum = getHum()
-        if not hrp or not hum then return false end
-
-        -- Skip kalau sudah dekat
-        if (hrp.Position - target).Magnitude < WP_REACH then
-            continue
-        end
-
-        setWP(string.format("%d/%d", i, total))
-        hum:MoveTo(target)
-
-        -- Tunggu sampai atau timeout
-        local t = 0
-        repeat
-            task.wait(0.1)
-            t += 0.1
-            if not AI_ON then return false end
-            local cur = getHRP()
-            if cur and (cur.Position - target).Magnitude < WP_REACH then break end
-        until t >= MOVETO_TIMEOUT
-
-        -- Jump kalau stuck (tidak maju)
-        local cur = getHRP()
-        if cur and (cur.Position - target).Magnitude > WP_REACH * 2 then
-            local hum2 = getHum()
-            if hum2 then hum2.Jump = true end
-            task.wait(0.3)
-        end
-    end
-
-    setWP("✓")
-    return true
+-- ================================================================
+--  EVIDENCE FOLDER & PROMPT HELPERS
+-- ================================================================
+local function evidenceFolder()
+    local ok, r = pcall(function()
+        return workspace:WaitForChild("Data",5)
+            :WaitForChild("Detective",5)
+            :WaitForChild("Evidence",5)
+            :WaitForChild("Instances",5)
+    end)
+    return ok and r or nil
 end
 
--- ============================================================
---  CORE: TRIGGER PROXIMITY PROMPT
---  Jalan dekat dulu (ikut waypoint terdekat), lalu fire
--- ============================================================
-local function triggerPrompt(prompt, promptPos, label)
-    if not prompt or not promptPos then return false end
-
-    -- Jalan ke posisi prompt via MoveTo langsung
-    -- (posisi ini sudah direkam, jadi aman)
-    local hrp = getHRP()
-    local hum = getHum()
-    if hrp and hum and (hrp.Position - promptPos).Magnitude > PROMPT_REACH then
-        setStatus("🚶 Menuju " .. (label or "prompt") .. "...",
-            Color3.fromRGB(80, 180, 255))
-        hum:MoveTo(promptPos)
-        local t = 0
-        repeat
-            task.wait(0.1)
-            t += 0.1
-            if not AI_ON then return false end
-            local cur = getHRP()
-            if cur and (cur.Position - promptPos).Magnitude <= PROMPT_REACH then break end
-        until t >= 5
-    end
-
-    task.wait(0.3)
-    local ok = pcall(function() fireproximityprompt(prompt) end)
-    if not ok then
-        -- Coba sekali lagi lebih dekat
-        task.wait(0.5)
-        ok = pcall(function() fireproximityprompt(prompt) end)
-    end
-    return ok
-end
-
--- ============================================================
---  PROMPT FINDER
--- ============================================================
-local function findPromptByText(text)
-    for _, obj in ipairs(workspace:GetDescendants()) do
-        if obj:IsA("ProximityPrompt") then
-            if obj.ActionText == text or obj.ObjectText == text then
-                local part = obj:FindFirstAncestorWhichIsA("BasePart")
-                if not part then
-                    local mdl = obj:FindFirstAncestorWhichIsA("Model")
-                    if mdl then
-                        part = mdl.PrimaryPart or mdl:FindFirstChildWhichIsA("BasePart", true)
-                    end
-                end
-                if part then return obj, part.Position end
-            end
-        end
-    end
-    return nil, nil
-end
-
-local function getCollectPrompt(model)
+local function collectPromptOf(model)
     for _, d in ipairs(model:GetDescendants()) do
         if d:IsA("ProximityPrompt") then
-            local at = string.lower(d.ActionText)
-            local ot = string.lower(d.ObjectText)
-            if at == "collect" or ot == "collect" then return d end
+            local a = d.ActionText:lower(); local o = d.ObjectText:lower()
+            if a=="collect" or o=="collect" then return d end
         end
     end
 end
 
-local function getInstancesFolder()
-    local ok, res = pcall(function()
-        return workspace
-            :WaitForChild("Data", 5)
-            :WaitForChild("Detective", 5)
-            :WaitForChild("Evidence", 5)
-            :WaitForChild("Instances", 5)
-    end)
-    return ok and res or nil
+local function findPromptByText(text)
+    for _, o in ipairs(workspace:GetDescendants()) do
+        if o:IsA("ProximityPrompt") and (o.ActionText==text or o.ObjectText==text) then
+            local p = o:FindFirstAncestorWhichIsA("BasePart")
+            if not p then
+                local m = o:FindFirstAncestorWhichIsA("Model")
+                if m then p = m.PrimaryPart or m:FindFirstChildWhichIsA("BasePart",true) end
+            end
+            if p then return o, p.Position end
+        end
+    end
 end
 
--- ============================================================
---  SCAN & SAVE MANUAL
--- ============================================================
+-- ================================================================
+--  SCAN & MANUAL SAVE
+-- ================================================================
 local function doScan()
-    setStatus("🔍 Scanning...", Color3.fromRGB(80, 180, 255))
+    setStatus("🔍 Scanning...", Color3.fromRGB(80,180,255))
     local n = 0
-    local function tryFind(text, key, lbl, btn)
-        local p, pos = findPromptByText(text)
-        if p then
-            savedPrompts[key] = p
-            savedPos[key]     = pos
-            markPrompt(lbl, true)
-            btn.BackgroundColor3 = C_TEAL
-            n += 1
+    local function try(text, key, plbl, pname)
+        local pr, pos = findPromptByText(text)
+        if pr then
+            savedP[key]=pr; savedPos[key]=pos
+            markPrompt(plbl, pname, true); n+=1
         else
-            markPrompt(lbl, false)
+            markPrompt(plbl, pname, false)
         end
     end
-    tryFind("Deposit Evidence", "deposit",  lblDeposit,  btnDeposit2)
-    tryFind("Lobby",            "lobby",    lblLobby,    btnLobby2)
-    tryFind("Facility",         "facility", lblFacility, btnFacility2)
-    setStatus("✅ Scan: " .. n .. "/3 ditemukan",
-        n == 3 and Color3.fromRGB(80,220,130) or Color3.fromRGB(255,200,60))
+    try("Deposit Evidence","deposit",pDeposit, "Deposit Evidence")
+    try("Lobby",           "lobby",  pLobby,   "Lobby (Lift)")
+    try("Facility",        "facility",pFacility,"Facility (Lift)")
+    setStatus("Scan: "..n.."/3", n==3 and Color3.fromRGB(80,220,130) or Color3.fromRGB(255,200,60))
 end
 
-local function saveManual(key, lbl, btn, displayName)
-    local hrp = getHRP()
-    if not hrp then return end
+local function saveManual(key, plbl, pname, searchText, btn2)
+    local h = hrp(); if not h then return end
     local bestP, bestPos, bestD = nil, nil, math.huge
-    for _, obj in ipairs(workspace:GetDescendants()) do
-        if obj:IsA("ProximityPrompt") then
-            if obj.ActionText == displayName or obj.ObjectText == displayName then
-                local part = obj:FindFirstAncestorWhichIsA("BasePart")
-                if part then
-                    local d = (part.Position - hrp.Position).Magnitude
-                    if d < bestD then bestP=obj; bestPos=part.Position; bestD=d end
-                end
+    for _, o in ipairs(workspace:GetDescendants()) do
+        if o:IsA("ProximityPrompt") and (o.ActionText==searchText or o.ObjectText==searchText) then
+            local p = o:FindFirstAncestorWhichIsA("BasePart")
+            if p then
+                local d = dist(p.Position, h.Position)
+                if d < bestD then bestP=o; bestPos=p.Position; bestD=d end
             end
         end
     end
     if bestP then
-        savedPrompts[key] = bestP
-        savedPos[key]     = bestPos
-        markPrompt(lbl, true)
-        btn.BackgroundColor3 = C_TEAL
-        setStatus("✅ Saved: " .. displayName, Color3.fromRGB(80,220,130))
+        savedP[key]=bestP; savedPos[key]=bestPos
+        markPrompt(plbl, pname, true)
+        btn2.BackgroundColor3 = TEAL
+        setStatus("✅ Saved: "..searchText, Color3.fromRGB(80,220,130))
     else
-        setStatus("⚠ Tidak ditemukan: " .. displayName, Color3.fromRGB(255,80,80))
+        setStatus("⚠ Tidak ditemukan: "..searchText, Color3.fromRGB(255,80,80))
     end
 end
 
-btnScan.MouseButton1Click:Connect(doScan)
-btnDeposit2.MouseButton1Click:Connect(function()
-    saveManual("deposit", lblDeposit, btnDeposit2, "Deposit Evidence")
-end)
-btnLobby2.MouseButton1Click:Connect(function()
-    saveManual("lobby", lblLobby, btnLobby2, "Lobby")
-end)
-btnFacility2.MouseButton1Click:Connect(function()
-    saveManual("facility", lblFacility, btnFacility2, "Facility")
-end)
+bScan.MouseButton1Click:Connect(doScan)
+bDeposit.MouseButton1Click:Connect(function()  saveManual("deposit","Deposit Evidence","Deposit Evidence",pDeposit,bDeposit) end)
+bLobby.MouseButton1Click:Connect(function()    saveManual("lobby",  "Lobby (Lift)",   "Lobby",           pLobby,  bLobby)   end)
+bFacility.MouseButton1Click:Connect(function() saveManual("facility","Facility (Lift)","Facility",        pFacility,bFacility) end)
 
--- ============================================================
---  COLLECT EVIDENCE — hanya ambil yang DEKAT dari posisi saat ini
---  Tidak jalan lurus ke evidence jauh (itu yang bikin bypass rail)
--- ============================================================
-local function collectNearby()
-    local folder = getInstancesFolder()
-    if not folder then
-        setStatus("⚠ Folder evidence tidak ada", Color3.fromRGB(255,80,80))
-        return
-    end
+-- ================================================================
+--  CORE: WALK RAIL + COLLECT SAMBIL LEWAT
+--
+--  Karakter berjalan waypoint ke waypoint.
+--  Di SETIAP waypoint, cek evidence dalam radius collectRadius.
+--  Kalau ada → gerak ke sana, collect, kembali ke jalur.
+--  Setelah selesai → lanjut waypoint berikutnya.
+--  Tidak ada pathfinding. Tidak ada fallback. Tidak ada loncat gajelas.
+-- ================================================================
+local function walkAndCollect(wpList, label)
+    if not wpList or #wpList == 0 then return end
 
-    setPhase("Collecting", Color3.fromRGB(80, 220, 130))
+    local folder = evidenceFolder()
+    local total  = #wpList
 
-    local maxAttempts = MAX_COL * 3  -- batas loop biar tidak infinite
-    local attempts    = 0
+    setPhase(label, Color3.fromRGB(255,220,60))
 
-    while COL_COUNT < MAX_COL and AI_ON and attempts < maxAttempts do
-        attempts += 1
+    for i, target in ipairs(wpList) do
+        if not AI_ON then return end
 
-        local hrp = getHRP()
-        local hum = getHum()
-        if not hrp or not hum then break end
+        local h = hrp(); local hu = hum()
+        if not h or not hu then return end
 
-        -- Cari evidence HANYA dalam radius COLLECT_RADIUS dari posisi saat ini
-        local targets = {}
-        for _, model in ipairs(folder:GetChildren()) do
-            local prompt = getCollectPrompt(model)
-            if prompt then
-                local bp = model.PrimaryPart or model:FindFirstChildWhichIsA("BasePart", true)
-                if bp then
-                    local dist = (bp.Position - hrp.Position).Magnitude
-                    if dist <= COLLECT_RADIUS then
-                        table.insert(targets, {
-                            prompt = prompt,
-                            pos    = bp.Position,
-                            dist   = dist,
-                            name   = model.Name,
-                        })
+        -- Skip waypoint yang sudah dekat
+        if dist(h.Position, target) < CFG.wpReach then
+            setWP(i.."/"..total.." (skip)")
+            continue
+        end
+
+        -- ── Jalan ke waypoint ini ──────────────────────────────
+        setWP(i.."/"..total)
+        setStatus(string.format("🚶 %s [%d/%d]", label, i, total),
+            Color3.fromRGB(80,180,255))
+
+        hu:MoveTo(target)
+
+        local elapsed = 0
+        while elapsed < CFG.moveTimeout do
+            task.wait(0.1)
+            elapsed += 0.1
+            if not AI_ON then return end
+            local cur = hrp()
+            if not cur then break end
+            if dist(cur.Position, target) <= CFG.wpReach then break end
+        end
+        -- Catatan: tidak ada jump, tidak ada retry.
+        -- Kalau waypoint direkam dengan benar, karakter PASTI sampai.
+        -- Kalau tidak sampai, dia skip ke waypoint berikutnya (yang lebih jauh) — ini justru baik.
+
+        -- ── Cek evidence sambil lewat ─────────────────────────
+        if folder and COL_COUNT < CFG.maxEvidence then
+            local curH = hrp()
+            if curH then
+                -- Cari semua evidence dalam radius collectRadius dari posisi saat ini
+                local nearby = {}
+                for _, model in ipairs(folder:GetChildren()) do
+                    local pr = collectPromptOf(model)
+                    if pr then
+                        local bp = model.PrimaryPart or model:FindFirstChildWhichIsA("BasePart",true)
+                        if bp then
+                            local d = dist(curH.Position, bp.Position)
+                            if d <= CFG.collectRadius then
+                                table.insert(nearby, {prompt=pr, pos=bp.Position, d=d, name=model.Name})
+                            end
+                        end
+                    end
+                end
+
+                -- Ambil semua yang dalam radius, terdekat dulu
+                table.sort(nearby, function(a,b) return a.d < b.d end)
+
+                for _, ev in ipairs(nearby) do
+                    if not AI_ON then return end
+                    if COL_COUNT >= CFG.maxEvidence then break end
+
+                    local curH2 = hrp(); local hu2 = hum()
+                    if not curH2 or not hu2 then break end
+
+                    -- Jalan ke evidence
+                    setStatus(string.format("📦 Ambil: %s (%.0f st)", ev.name, ev.d),
+                        Color3.fromRGB(80,220,130))
+                    hu2:MoveTo(ev.pos)
+
+                    local t2 = 0
+                    while t2 < 4 do
+                        task.wait(0.1); t2+=0.1
+                        if not AI_ON then return end
+                        local c2 = hrp()
+                        if c2 and dist(c2.Position, ev.pos) <= CFG.promptReach then break end
+                    end
+
+                    -- Collect
+                    local ok = pcall(function() fireproximityprompt(ev.prompt) end)
+                    if ok then
+                        COL_COUNT += 1
+                        setCount(COL_COUNT)
+                        setStatus("✅ "..COL_COUNT.."/"..CFG.maxEvidence.." — lanjut jalur",
+                            Color3.fromRGB(80,220,130))
+                    end
+                    task.wait(0.3)
+
+                    -- Kembali ke waypoint jalur saat ini sebelum lanjut
+                    -- (supaya tidak meleset terlalu jauh dari jalur)
+                    local backH = hrp(); local backHu = hum()
+                    if backH and backHu and dist(backH.Position, target) > CFG.wpReach * 2 then
+                        backHu:MoveTo(target)
+                        local t3=0
+                        while t3 < 2 do
+                            task.wait(0.1); t3+=0.1
+                            if not AI_ON then return end
+                            local c3 = hrp()
+                            if c3 and dist(c3.Position, target) <= CFG.wpReach then break end
+                        end
                     end
                 end
             end
         end
-
-        if #targets == 0 then
-            -- Tidak ada evidence di radius ini → selesai di area ini
-            break
-        end
-
-        -- Ambil yang terdekat
-        table.sort(targets, function(a, b) return a.dist < b.dist end)
-        local t = targets[1]
-
-        setStatus(string.format("🔍 [%d/%d] %s (%.0f st)",
-            COL_COUNT + 1, MAX_COL, t.name, t.dist),
-            Color3.fromRGB(80, 180, 255))
-
-        -- Jalan ke evidence pakai MoveTo biasa (bukan pathfind)
-        hum:MoveTo(t.pos)
-        local elapsed = 0
-        repeat
-            task.wait(0.15)
-            elapsed += 0.15
-            if not AI_ON then return end
-            local cur = getHRP()
-            if cur and (cur.Position - t.pos).Magnitude <= PROMPT_REACH then break end
-        until elapsed >= 6
-
-        if not AI_ON then return end
-        task.wait(0.2)
-
-        -- Trigger collect
-        local cur = getHRP()
-        if cur and (cur.Position - t.pos).Magnitude <= PROMPT_REACH + 3 then
-            local ok = pcall(function() fireproximityprompt(t.prompt) end)
-            if ok then
-                COL_COUNT += 1
-                setCount(COL_COUNT)
-                setStatus("✅ Collected " .. COL_COUNT .. "/" .. MAX_COL,
-                    Color3.fromRGB(80, 220, 130))
-            end
-        end
-
-        task.wait(0.4)
     end
+
+    setWP("✓ " .. label)
 end
 
--- ============================================================
---  AI MAIN LOOP
--- ============================================================
+-- ================================================================
+--  TRIGGER LIFT / DEPOSIT — jalan MoveTo ke posisi, lalu fire
+-- ================================================================
+local function doPrompt(key, label)
+    if not savedP[key] or not savedPos[key] then
+        setStatus("⚠ "..label.." belum di-save!", Color3.fromRGB(255,80,80))
+        return false
+    end
+
+    local h = hrp(); local hu = hum()
+    if not h or not hu then return false end
+
+    setStatus("🚶 Menuju "..label.."...", Color3.fromRGB(80,180,255))
+    hu:MoveTo(savedPos[key])
+
+    local t = 0
+    while t < 6 do
+        task.wait(0.1); t+=0.1
+        if not AI_ON then return false end
+        local cur = hrp()
+        if cur and dist(cur.Position, savedPos[key]) <= CFG.promptReach then break end
+    end
+
+    task.wait(0.2)
+    local ok = pcall(function() fireproximityprompt(savedP[key]) end)
+    setStatus((ok and "✅" or "❌").." "..label, ok and Color3.fromRGB(80,220,130) or Color3.fromRGB(255,80,80))
+    return ok
+end
+
+-- ================================================================
+--  MAIN AI LOOP
+-- ================================================================
 local function runAI()
-    COL_COUNT = 0
-    setCount(0)
-    setStatus("🤖 AI dimulai...", Color3.fromRGB(255, 220, 60))
+    COL_COUNT = 0; setCount(0)
+    setStatus("🤖 Mulai...", Color3.fromRGB(255,220,60))
     task.wait(1)
 
     while AI_ON do
 
-        -- ── 1. Collect di Island (area awal) ──────────────────────────────
-        setPhase("Island Collect", Color3.fromRGB(80, 220, 130))
-        setWP("—")
-        collectNearby()
+        -- FASE 1: Jalan Boat→Lift sambil collect di island
+        setPhase("Island → Lift", Color3.fromRGB(255,180,60))
+        walkAndCollect(secWP("Boat → Lift Lobby"), "Boat→Lift")
         if not AI_ON then break end
 
-        -- ── 2. Kalau masih butuh evidence → ke Lobby via waypoint rail ────
-        if COL_COUNT < MAX_COL then
-
-            -- Jalan ke lift (Boat → Lift Lobby) pakai waypoint
-            walkWaypoints(getSectionWP("Boat → Lift Lobby"), "Boat → Lift")
+        -- Kalau masih butuh evidence, naik ke lobby
+        if COL_COUNT < CFG.maxEvidence then
+            doPrompt("lobby", "Lobby Lift")
+            task.wait(CFG.liftWait)
             if not AI_ON then break end
 
-            -- Trigger lift lobby
-            setStatus("🛗 Naik lift...", Color3.fromRGB(80, 180, 255))
-            triggerPrompt(savedPrompts.lobby, savedPos.lobby, "Lobby Lift")
-            task.wait(LIFT_WAIT)
+            -- FASE 2: Jalan di area lobby sambil collect
+            setPhase("Lobby Collect", Color3.fromRGB(80,180,255))
+            walkAndCollect(secWP("Lobby → Area Evidence"), "Lobby→Evidence")
             if not AI_ON then break end
 
-            -- Jalan ke area evidence (Lobby → Area Evidence)
-            walkWaypoints(getSectionWP("Lobby → Area Evidence"), "Lobby → Evidence")
+            -- FASE 3: Balik ke island via lift
+            walkAndCollect(secWP("Area Evidence → Lift Island"), "Evidence→LiftIsland")
             if not AI_ON then break end
 
-            -- Collect di lobby area
-            setPhase("Lobby Collect", Color3.fromRGB(80, 220, 130))
-            collectNearby()
+            doPrompt("facility", "Facility Lift")
+            task.wait(CFG.liftWait)
             if not AI_ON then break end
 
-            -- Jalan ke lift balik (Area Evidence → Lift Island)
-            walkWaypoints(getSectionWP("Area Evidence → Lift Island"), "Evidence → Lift")
-            if not AI_ON then break end
-
-            -- Trigger lift balik
-            setStatus("🛗 Turun lift...", Color3.fromRGB(80, 180, 255))
-            triggerPrompt(savedPrompts.facility, savedPos.facility, "Facility Lift")
-            task.wait(LIFT_WAIT)
-            if not AI_ON then break end
-
-            -- Jalan balik ke boat area (Lift Island → Boat)
-            walkWaypoints(getSectionWP("Lift Island → Boat"), "Island → Boat")
+            -- FASE 4: Jalan balik ke boat sambil collect sisa
+            walkAndCollect(secWP("Lift Island → Boat"), "Island→Boat")
             if not AI_ON then break end
         end
 
-        -- ── 3. Deposit ─────────────────────────────────────────────────────
-        if savedPos.deposit then
-            setPhase("Deposit", Color3.fromRGB(80, 220, 130))
-            local ok = triggerPrompt(savedPrompts.deposit, savedPos.deposit, "Deposit")
-            task.wait(DEPOSIT_WAIT)
-            setStatus(ok and "✅ Deposit berhasil!" or "❌ Deposit gagal — coba lagi",
-                ok and Color3.fromRGB(80,220,130) or Color3.fromRGB(255,80,80))
-            task.wait(2)
-        end
+        -- FASE 5: Deposit
+        setPhase("Deposit", Color3.fromRGB(80,220,130))
+        doPrompt("deposit", "Deposit Evidence")
+        task.wait(CFG.depositWait)
+        if not AI_ON then break end
 
-        -- Reset
-        COL_COUNT = 0
-        setCount(0)
-        setPhase("Idle", Color3.fromRGB(160, 160, 180))
-        setStatus("🔄 Siklus selesai — ulang...", Color3.fromRGB(255, 220, 60))
+        -- Reset cycle
+        COL_COUNT = 0; setCount(0)
+        setPhase("Idle", Color3.fromRGB(160,160,180))
+        setStatus("🔄 Siklus selesai, ulang...", Color3.fromRGB(255,220,60))
         task.wait(2)
     end
 
-    setPhase("Stopped", Color3.fromRGB(160, 160, 180))
-    setStatus("⏹ AI dihentikan", Color3.fromRGB(160, 160, 180))
+    setPhase("Stopped", Color3.fromRGB(160,160,180))
+    setStatus("⏹ Dihentikan", Color3.fromRGB(160,160,180))
     setWP("—")
 end
 
--- ============================================================
+-- ================================================================
 --  TOMBOL
--- ============================================================
+-- ================================================================
 local function stopAI()
     AI_ON = false
-    btnAI.Text             = "🧠  AI Farming  :  OFF"
-    btnAI.BackgroundColor3 = C_GREY
-    local hum = getHum()
-    local hrp = getHRP()
-    if hum and hrp then hum:MoveTo(hrp.Position) end
-    setPhase("Stopped", Color3.fromRGB(160, 160, 180))
-    setStatus("⏹ Dihentikan", Color3.fromRGB(160, 160, 180))
-    setWP("—")
+    bAI.Text="🧠  AI  :  OFF"; bAI.BackgroundColor3=GREY
+    local hu=hum(); local h=hrp()
+    if hu and h then hu:MoveTo(h.Position) end
+    setPhase("Stopped",Color3.fromRGB(160,160,180))
+    setStatus("⏹ Dihentikan",Color3.fromRGB(160,160,180)); setWP("—")
 end
 
-btnAI.MouseButton1Click:Connect(function()
+bAI.MouseButton1Click:Connect(function()
     AI_ON = not AI_ON
     if AI_ON then
-        btnAI.Text             = "🧠  AI Farming  :  ON"
-        btnAI.BackgroundColor3 = C_AMBER
+        bAI.Text="🧠  AI  :  ON"; bAI.BackgroundColor3=AMBER
         task.spawn(runAI)
-    else
-        stopAI()
-    end
+    else stopAI() end
 end)
-
-btnStop.MouseButton1Click:Connect(stopAI)
+bStop.MouseButton1Click:Connect(stopAI)
 
 LP.CharacterAdded:Connect(function() end)
 
 task.delay(2, doScan)
-setStatus("✅ Ready — scan lalu start AI", Color3.fromRGB(80, 220, 130))
-setPhase("Ready", Color3.fromRGB(80, 220, 130))
+setStatus("✅ Ready", Color3.fromRGB(80,220,130))
+setPhase("Ready", Color3.fromRGB(80,220,130))
