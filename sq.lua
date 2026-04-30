@@ -240,12 +240,12 @@ local CFG = {
     scanInterval   = 0.5,
 
     -- Speed tiers
-    speedFlat      = 100,  -- datar / turun
-    speedSlope     = 55,   -- nanjak sedang  (deltaY 5–15 per 50 stud)
-    speedSteep     = 28,   -- nanjak curam   (deltaY > 15 per 50 stud)
-    jumpNormal     = 80,
-    jumpSlope      = 55,   -- loncat lebih pelan saat nanjak
-    jumpSteep      = 35,
+    speedFlat      = 120,  -- datar / turun (naik sedikit dari 100)
+    speedSlope     = 65,   -- nanjak sedang
+    speedSteep     = 32,   -- nanjak curam
+    jumpNormal     = 50,   -- jump dinormalkan saat AI farming
+    jumpSlope      = 50,   -- sama, tidak dikurangi
+    jumpSteep      = 50,   -- sama
 
     -- Slope thresholds (rasio deltaY / hDist)
     slopeThreshMed  = 0.10,  -- 10% = sedang
@@ -727,8 +727,8 @@ hPatch.BorderSizePixel  = 0
 hPatch.ZIndex           = 3
 
 local titleTxt = Instance.new("TextLabel", header)
-titleTxt.Size              = UDim2.new(1, -80, 1, 0)
-titleTxt.Position          = UDim2.new(0, 14, 0, 0)
+titleTxt.Size              = UDim2.new(1, -100, 0, 22)
+titleTxt.Position          = UDim2.new(0, 14, 0, 4)
 titleTxt.BackgroundTransparency = 1
 titleTxt.Text              = "🦑  SQ Tool"
 titleTxt.TextColor3        = C.accent
@@ -738,15 +738,56 @@ titleTxt.TextXAlignment    = Enum.TextXAlignment.Left
 titleTxt.ZIndex            = 4
 
 local subTxt = Instance.new("TextLabel", header)
-subTxt.Size              = UDim2.new(1, -80, 0, 12)
-subTxt.Position          = UDim2.new(0, 14, 0, 28)
+subTxt.Size              = UDim2.new(1, -100, 0, 12)
+subTxt.Position          = UDim2.new(0, 14, 0, 27)
 subTxt.BackgroundTransparency = 1
-subTxt.Text              = "CR : menzcreate"
-subTxt.TextColor3        = C.dim
+subTxt.Text              = "© menzcreate  |  discord: menzcreate"
+subTxt.TextColor3        = Color3.fromRGB(130, 130, 145)
 subTxt.Font              = Enum.Font.Gotham
-subTxt.TextSize          = 10
+subTxt.TextSize          = 9
 subTxt.TextXAlignment    = Enum.TextXAlignment.Left
 subTxt.ZIndex            = 4
+
+-- ─── Tombol Minimize ──────────────────────────────────────────
+local minBtn = Instance.new("TextButton", header)
+minBtn.Size             = UDim2.new(0, 24, 0, 24)
+minBtn.Position         = UDim2.new(1, -60, 0, 10)
+minBtn.BackgroundColor3 = Color3.fromRGB(28, 28, 36)
+minBtn.TextColor3       = C.dim
+minBtn.Font             = Enum.Font.GothamBold
+minBtn.TextSize         = 13
+minBtn.Text             = "–"
+minBtn.AutoButtonColor  = false
+minBtn.BorderSizePixel  = 0
+minBtn.ZIndex           = 5
+Instance.new("UICorner", minBtn).CornerRadius = UDim.new(0, 6)
+
+-- ─── Float button (saat minimize) ─────────────────────────────
+local floatBtn = Instance.new("TextButton", gui)
+floatBtn.Size             = UDim2.new(0, 44, 0, 44)
+floatBtn.Position         = UDim2.new(0, 14, 0, 14)
+floatBtn.BackgroundColor3 = C.bg1
+floatBtn.TextColor3       = C.accent
+floatBtn.Font             = Enum.Font.GothamBold
+floatBtn.TextSize         = 20
+floatBtn.Text             = "🦑"
+floatBtn.AutoButtonColor  = false
+floatBtn.BorderSizePixel  = 0
+floatBtn.Visible          = false
+floatBtn.ZIndex           = 15
+Instance.new("UICorner", floatBtn).CornerRadius = UDim.new(0, 10)
+local floatStroke = Instance.new("UIStroke", floatBtn)
+floatStroke.Color = C.border; floatStroke.Thickness = 1
+
+local MINIMIZED = false
+local function setMinimized(val)
+    MINIMIZED = val
+    mainFrame.Visible = not val
+    floatBtn.Visible  = val
+end
+
+minBtn.MouseButton1Click:Connect(function() setMinimized(true) end)
+floatBtn.MouseButton1Click:Connect(function() setMinimized(false) end)
 
 -- ─── Tombol X (close) ─────────────────────────────────────────
 local closeBtn = Instance.new("TextButton", header)
@@ -755,7 +796,7 @@ closeBtn.Position         = UDim2.new(1, -32, 0, 10)
 closeBtn.BackgroundColor3 = Color3.fromRGB(40, 20, 20)
 closeBtn.TextColor3       = C.red
 closeBtn.Font             = Enum.Font.GothamBold
-closeBtn.TextSize         = 14
+closeBtn.TextSize         = 13
 closeBtn.Text             = "✕"
 closeBtn.AutoButtonColor  = false
 closeBtn.BorderSizePixel  = 0
@@ -884,12 +925,12 @@ end
 local function rowY(i) return ROW_Y + (i-1)*(ROW_H+ROW_GAP) end
 
 -- Baris toggle
-local _, hlPill,   hlBtn   = mkToggleRow("Highlight",    "◈",  rowY(1))
-local _, spPill,   spBtn   = mkToggleRow("Speed + Jump", "⚡", rowY(2))
-local _, ncPill,   ncBtn   = mkToggleRow("Noclip",       "◉",  rowY(3))
-local _, aiPill,   aiBtn   = mkToggleRow("AI Farming (beta)",   "🤖", rowY(4))
-local _, autoPill, autoBtn = mkToggleRow("Auto Collect", "📦", rowY(5))
-local _, babyPill, babyBtn = mkToggleRow("Auto Baby",    "🍼", rowY(6))
+local _, hlPill,   hlBtn   = mkToggleRow("Highlight",          "◈",  rowY(1))
+local _, spPill,   spBtn   = mkToggleRow("Speed + Jump",       "⚡", rowY(2))
+local _, ncPill,   ncBtn   = mkToggleRow("Noclip",             "◉",  rowY(3))
+local _, aiPill,   aiBtn   = mkToggleRow("AI Farming  (beta)", "🤖", rowY(4))
+local _, autoPill, autoBtn = mkToggleRow("Auto Collect",       "📦", rowY(5))
+local _, babyPill, babyBtn = mkToggleRow("Auto Baby",          "🍼", rowY(6))
 
 setToggle(hlPill, true)  -- highlight default ON
 
@@ -1022,7 +1063,11 @@ end)
 UserInputService.InputBegan:Connect(function(i, gp)
     if not gp and i.KeyCode == Enum.KeyCode.RightControl then
         if not CLOSED then
-            mainFrame.Visible = not mainFrame.Visible
+            if MINIMIZED then
+                setMinimized(false)
+            else
+                mainFrame.Visible = not mainFrame.Visible
+            end
         end
     end
 end)
@@ -1256,6 +1301,40 @@ function runAI()
             end
             updateStatus("📍 Snap island WP " .. currentWP, C.warn)
             continue
+        end
+
+        -- ──────────────────────────────────────────────────────
+        --  SHORTCUT: evidence penuh → langsung deposit tanpa
+        --  ikut jalur. Cari prompt deposit, teleport & fire.
+        -- ──────────────────────────────────────────────────────
+        if collected >= CFG.maxEvidence then
+            updateStatus("💼 Evidence penuh! Cari deposit...", C.ok)
+            local pr, pos = findPromptByText("Deposit Evidence")
+            if pr then
+                -- Teleport langsung ke deposit jika jauh
+                local h3 = getHRP()
+                if h3 and (h3.Position - pos).Magnitude > 50 then
+                    h3.CFrame = CFrame.new(pos + Vector3.new(0, 4, 0))
+                    task.wait(0.5)
+                end
+                firePromptAt(pr, pos, "Deposit")
+                task.wait(CFG.depositWait)
+            else
+                -- Deposit belum ditemukan → tetap ikut jalur sampai WP 117
+                updateStatus("⚠ Deposit tidak ditemukan, lanjut jalur", C.warn)
+                -- Jika masih di island awal, skip ke jalur balik (WP 78)
+                local curZone2 = getZone(h2.Position)
+                if curZone2 == "ISLAND" and currentWP <= 35 then
+                    currentWP = 78; wentLobby = true
+                end
+                task.wait(0.5)
+            end
+            if not AI_ON then break end
+            -- Reset setelah deposit
+            collected = 0; updateCount(0)
+            wentLobby = false; currentWP = 1
+            updateStatus("🔄 Deposit selesai, ulang...", C.warn)
+            task.wait(1); continue
         end
 
         -- ──────────────────────────────────────────────────────
