@@ -293,13 +293,15 @@ local CFG = {
     stopTimeout    = 0.6,
     scanInterval   = 0.5,
 
-    -- Speed tiers (AI farming — lebih pelan agar tidak tembus)
-    speedFlat      = 32,   -- datar / turun
-    speedSlope     = 20,   -- nanjak sedang
-    speedSteep     = 12,   -- nanjak curam
-    jumpNormal     = 50,   -- jump normal (tidak diubah)
-    jumpSlope      = 50,
-    jumpSteep      = 50,
+    -- Speed tiers
+    speedFlat      = 120,  -- datar / turun (naik sedikit dari 100)
+    speedFlat      = 100,  -- datar / turun (naik sedikit dari 100)
+    speedSlope     = 65,   -- nanjak sedang
+    speedSteep     = 32,   -- nanjak curam
+    jumpNormal     = 50,   -- jump dinormalkan saat AI farming
+    jumpNormal     = 25,   -- jump dinormalkan saat AI farming
+    jumpSlope      = 50,   -- sama, tidak dikurangi
+    jumpSteep      = 50,   -- sama
 
     -- Slope thresholds (rasio deltaY / hDist)
     slopeThreshMed  = 0.10,  -- 10% = sedang
@@ -504,159 +506,98 @@ local function teleportToWP(wpIdx)
 end
 
 -- ================================================================
---  WALK TO — CFrame glide (flat) + micro-step Y-lock (slope)
---
---  FLAT  (deltaY < 3 studs): CFrame mode — paksa posisi langsung,
---        Y dikunci ke interpolasi linear antara start dan target.
---        Karakter tidak bisa "slide up" ke atap bangunan.
---
---  SLOPE/STEEP (noclip+nanjak): micro-step + Y-lock interpolasi.
---        Setiap step, Y dipaksa ke nilai yang seharusnya di titik
---        itu berdasarkan progress perjalanan.
---
---  NORMAL (noclip off / flat tanpa AI): MoveTo biasa.
+--  WALK TO — slope-aware dengan micro-step & Y-drift guard
 -- ================================================================
-local FLAT_Y_THRESHOLD = 3  -- studs — di bawah ini dianggap flat
-
 local function walkTo(target, timeoutSec)
     local hu = getHum(); local h = getHRP()
     if not hu or not h then return false end
     if (h.Position - target).Magnitude <= CFG.wpReach then return true end
 
-    local startPos  = h.Position
-    local totalDist = (target - startPos).Magnitude
-    local deltaY    = target.Y - startPos.Y
-    local isFlat    = math.abs(deltaY) < FLAT_Y_THRESHOLD
-    local limit     = timeoutSec or CFG.moveTimeout
+    -- Hitung slope ke target
+    local slope, spd, jmp = calcSlope(h.Position, target)
+    currentSlope = slope
+    currentSpeed = spd
+    currentJump  = jmp
 
-    -- Hitung slope untuk speed
-    local slope, spd, jmp = calcSlope(startPos, target)
-    currentSlope = slope; currentSpeed = spd; currentJump = jmp
-    if SPEED_ON and hu then
+    local isSteepOrSlope = (slope == "STEEP" or slope == "SLOPE")
+    local useNoclip      = NOCLIP_ON and isSteepOrSlope
+
+    -- Update speed humanoid langsung
+    if SPEED_ON then
         hu.UseJumpPower = true
         hu.WalkSpeed    = spd
         hu.JumpPower    = jmp
     end
 
-    -- ── MODE 1: CFrame GLIDE — flat + noclip aktif ────────────────
-    -- Karakter dipindah paksa via CFrame tiap step kecil.
-    -- Y dikunci ke interpolasi linear → mustahil naik ke atap.
-    if NOCLIP_ON and isFlat then
-        local elapsed = 0
-        local stepSize = CFG.microStepDist * 0.7  -- lebih kecil untuk presisi
+    -- ── MICRO-STEP MODE (noclip + nanjak) ────────────────────────
+    -- Jalan dalam langkah kecil agar tidak tembus lantai/dinding
+    if useNoclip then
+        local limit     = timeoutSec or CFG.moveTimeout
+        local elapsed   = 0
+        local prevY     = h.Position.Y
 
         while elapsed < limit do
             if not AI_ON then return false end
             local cur = getHRP(); if not cur then return false end
 
-            local remaining = (target - cur.Position).Magnitude
-            if remaining <= CFG.wpReach then return true end
+            local dist = (cur.Position - target).Magnitude
+            if dist <= CFG.wpReach then return true end
 
-            -- Progress 0→1 dari start ke target
-            local progress  = 1 - (remaining / math.max(totalDist, 1))
-            progress        = math.clamp(progress, 0, 1)
-
-            -- Y yang seharusnya di titik ini (interpolasi linear)
-            local lockedY   = startPos.Y + deltaY * progress
-
-            -- Arah horizontal saja (XZ), Y dikontrol manual
-            local dir2D     = Vector3.new(
-                target.X - cur.Position.X,
-                0,
-                target.Z - cur.Position.Z
-            )
-            if dir2D.Magnitude > 0.1 then
-                dir2D = dir2D.Unit
-            end
-            local moveStep  = math.min(stepSize, remaining)
-            local nextPos   = Vector3.new(
-                cur.Position.X + dir2D.X * moveStep,
-                lockedY,   -- Y dikunci!
-                cur.Position.Z + dir2D.Z * moveStep
-            )
-
-            -- CFrame langsung — bypass physics sepenuhnya
-            cur.CFrame = CFrame.new(nextPos) * (cur.CFrame - cur.CFrame.Position)
-
-            task.wait(CFG.microStepWait)
-            elapsed += CFG.microStepWait
-        end
-        return false
-
-    -- ── MODE 2: MICRO-STEP + Y-LOCK — nanjak/turun + noclip ──────
-    -- Tiap step, Y dipaksa ke nilai interpolasi → tidak bisa slide up.
-    elseif NOCLIP_ON and not isFlat then
-        local elapsed = 0
-        local prevY   = startPos.Y
-
-        while elapsed < limit do
-            if not AI_ON then return false end
-            local cur = getHRP(); if not cur then return false end
-
-            local remaining = (target - cur.Position).Magnitude
-            if remaining <= CFG.wpReach then return true end
-
-            -- Re-hitung slope realtime
+            -- Re-hitung slope secara berkala (bisa berubah di tengah jalan)
             local newSlope, newSpd, newJmp = calcSlope(cur.Position, target)
             if newSlope ~= currentSlope then
                 currentSlope = newSlope; currentSpeed = newSpd; currentJump = newJmp
-                local hu2 = getHum()
-                if hu2 and SPEED_ON then
-                    hu2.WalkSpeed = newSpd; hu2.JumpPower = newJmp
+                local hum2 = getHum()
+                if hum2 and SPEED_ON then
+                    hum2.WalkSpeed = newSpd; hum2.JumpPower = newJmp
                 end
             end
 
-            local progress  = 1 - (remaining / math.max(totalDist, 1))
-            progress        = math.clamp(progress, 0, 1)
-            local lockedY   = startPos.Y + deltaY * progress
+            -- Hitung arah micro-step
+            local dir    = (target - cur.Position).Unit
+            local stepTarget = cur.Position + dir * math.min(CFG.microStepDist, dist)
 
-            -- Arah 3D ke target, tapi Y di-override
-            local dir       = (target - cur.Position).Unit
-            local stepSize  = math.min(CFG.microStepDist, remaining)
-            local nextPos   = Vector3.new(
-                cur.Position.X + dir.X * stepSize,
-                lockedY,
-                cur.Position.Z + dir.Z * stepSize
-            )
-
-            -- Kombinasi: CFrame untuk Y-lock, MoveTo untuk animasi jalan
-            cur.CFrame = CFrame.new(
-                nextPos.X, lockedY, nextPos.Z,
-                cur.CFrame.XVector.X, cur.CFrame.XVector.Y, cur.CFrame.XVector.Z,
-                cur.CFrame.YVector.X, cur.CFrame.YVector.Y, cur.CFrame.YVector.Z,
-                cur.CFrame.ZVector.X, cur.CFrame.ZVector.Y, cur.CFrame.ZVector.Z
-            )
+            -- Y-drift guard: pertahankan Y WP jika drop terlalu jauh
+            local expectedY = cur.Position.Y + (target.Y - cur.Position.Y) *
+                              (CFG.microStepDist / math.max(dist, 1))
             local hu2 = getHum()
-            if hu2 then hu2:MoveTo(target) end  -- animasi tetap jalan
+            if hu2 then hu2:MoveTo(stepTarget) end
 
-            -- Y-drift guard (jaga-jaga kalau physics masih ikut campur)
             task.wait(CFG.microStepWait)
             elapsed += CFG.microStepWait
 
+            -- Cek Y drift (tembus lantai?)
             local afterH = getHRP()
             if afterH then
-                local yErr = math.abs(afterH.Position.Y - lockedY)
-                if yErr > CFG.yDriftMax then
+                local yDrop = prevY - afterH.Position.Y
+                if yDrop > CFG.yDriftMax then
+                    -- Koreksi: angkat kembali ke Y yang diharapkan + buffer
                     afterH.CFrame = CFrame.new(
-                        afterH.Position.X, lockedY + 1, afterH.Position.Z
+                        afterH.Position.X,
+                        prevY + 2,  -- angkat ke Y sebelumnya + buffer kecil
+                        afterH.Position.Z
                     )
-                    updateStatus("⚠ Y-koreksi slope", C.warn)
+                    updateStatus("⚠ Y-drift → koreksi", C.warn)
+                    task.wait(0.1)
                 end
                 prevY = afterH.Position.Y
             end
         end
         return false
 
-    -- ── MODE 3: NORMAL — noclip off, pakai MoveTo biasa ───────────
+    -- ── NORMAL MODE (flat / turun / noclip off) ───────────────────
     else
         hu:MoveTo(target)
         local t = 0
+        local limit = timeoutSec or CFG.moveTimeout
         while t < limit do
             task.wait(0.1); t += 0.1
             if not AI_ON then return false end
             local cur = getHRP(); if not cur then return false end
             if (cur.Position - target).Magnitude <= CFG.wpReach then return true end
+            -- Re-issue MoveTo tiap 1.5 detik agar tidak drift
             if t % 1.5 < 0.11 then
+                -- Re-hitung slope (karena Y berubah saat jalan)
                 local newSlope, newSpd, newJmp = calcSlope(cur.Position, target)
                 currentSlope = newSlope; currentSpeed = newSpd; currentJump = newJmp
                 local hu2 = getHum()
