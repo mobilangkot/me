@@ -74,7 +74,6 @@ subLbl.TextXAlignment  = Enum.TextXAlignment.Left
 subLbl.Text            = "by menzcreate  •  discord: menzcreate"
 subLbl.ZIndex          = 5
 
--- Status bar
 local statusBar = Instance.new("Frame", frame)
 statusBar.Size             = UDim2.new(1, -16, 0, 28)
 statusBar.Position         = UDim2.new(0, 8, 0, 50)
@@ -94,7 +93,6 @@ statusLbl.TextXAlignment     = Enum.TextXAlignment.Left
 statusLbl.Text               = "Idle"
 statusLbl.ZIndex             = 4
 
--- Count bar
 local countBar = Instance.new("Frame", frame)
 countBar.Size             = UDim2.new(1, -16, 0, 22)
 countBar.Position         = UDim2.new(0, 8, 0, 84)
@@ -114,7 +112,6 @@ countLbl.TextXAlignment     = Enum.TextXAlignment.Left
 countLbl.Text               = "Evidence: 0 / 8"
 countLbl.ZIndex             = 4
 
--- Pos panel
 local posPanel = Instance.new("Frame", frame)
 posPanel.Size             = UDim2.new(1, -16, 0, 76)
 posPanel.Position         = UDim2.new(0, 8, 0, 112)
@@ -155,7 +152,6 @@ local posDeposit  = makePosLabel(20, "Deposit Evidence")
 local posLobby    = makePosLabel(38, "Lobby (Lift)")
 local posFacility = makePosLabel(56, "Facility (Lift)")
 
--- Buttons
 local function newBtn(text, posY, col)
     local b = Instance.new("TextButton", frame)
     b.Size             = UDim2.new(1, -16, 0, 32)
@@ -274,20 +270,38 @@ local function doScan()
     setStatus("🔍 Scanning...", Color3.fromRGB(80,180,255))
 
     local p1, pos1 = findPromptByText("Deposit Evidence")
-    if p1 then savedPrompts.deposit=p1; savedPos.deposit=pos1; updatePosLabel(posDeposit,true); setBtnSaved(btnDeposit,true)
-    else updatePosLabel(posDeposit,false) end
+    if p1 then
+        savedPrompts.deposit = p1
+        savedPos.deposit     = pos1
+        updatePosLabel(posDeposit, true)
+        setBtnSaved(btnDeposit, true)
+    else
+        updatePosLabel(posDeposit, false)
+    end
 
     local p2, pos2 = findPromptByText("Lobby")
-    if p2 then savedPrompts.lobby=p2; savedPos.lobby=pos2; updatePosLabel(posLobby,true); setBtnSaved(btnLobby,true)
-    else updatePosLabel(posLobby,false) end
+    if p2 then
+        savedPrompts.lobby = p2
+        savedPos.lobby     = pos2
+        updatePosLabel(posLobby, true)
+        setBtnSaved(btnLobby, true)
+    else
+        updatePosLabel(posLobby, false)
+    end
 
     local p3, pos3 = findPromptByText("Facility")
-    if p3 then savedPrompts.facility=p3; savedPos.facility=pos3; updatePosLabel(posFacility,true); setBtnSaved(btnFacility,true)
-    else updatePosLabel(posFacility,false) end
+    if p3 then
+        savedPrompts.facility = p3
+        savedPos.facility     = pos3
+        updatePosLabel(posFacility, true)
+        setBtnSaved(btnFacility, true)
+    else
+        updatePosLabel(posFacility, false)
+    end
 
-    local found = (p1 and 1 or 0)+(p2 and 1 or 0)+(p3 and 1 or 0)
-    setStatus("✅ Scan selesai: "..found.."/3",
-        found==3 and Color3.fromRGB(80,220,130) or Color3.fromRGB(255,200,60))
+    local found = (p1 and 1 or 0) + (p2 and 1 or 0) + (p3 and 1 or 0)
+    setStatus("✅ Scan: " .. found .. "/3 ditemukan",
+        found == 3 and Color3.fromRGB(80,220,130) or Color3.fromRGB(255,200,60))
 end
 
 local function saveManual(key, lbl, btn, displayName)
@@ -306,127 +320,145 @@ local function saveManual(key, lbl, btn, displayName)
         end
     end
     if bestP then
-        savedPrompts[key]=bestP; savedPos[key]=bestPos
-        updatePosLabel(lbl,true); setBtnSaved(btn,true)
-        setStatus("✅ Saved: "..displayName, Color3.fromRGB(80,220,130))
+        savedPrompts[key] = bestP
+        savedPos[key]     = bestPos
+        updatePosLabel(lbl, true)
+        setBtnSaved(btn, true)
+        setStatus("✅ Saved: " .. displayName, Color3.fromRGB(80,220,130))
     else
-        setStatus("⚠ Prompt '"..displayName.."' tidak ditemukan", Color3.fromRGB(255,80,80))
+        setStatus("⚠ '"..displayName.."' tidak ditemukan", Color3.fromRGB(255,80,80))
     end
 end
 
 btnScan.MouseButton1Click:Connect(doScan)
-btnDeposit.MouseButton1Click:Connect(function()  saveManual("deposit",  posDeposit,  btnDeposit,  "Deposit Evidence") end)
-btnLobby.MouseButton1Click:Connect(function()    saveManual("lobby",    posLobby,    btnLobby,    "Lobby")           end)
-btnFacility.MouseButton1Click:Connect(function() saveManual("facility", posFacility, btnFacility, "Facility")        end)
+btnDeposit.MouseButton1Click:Connect(function()
+    saveManual("deposit", posDeposit, btnDeposit, "Deposit Evidence")
+end)
+btnLobby.MouseButton1Click:Connect(function()
+    saveManual("lobby", posLobby, btnLobby, "Lobby")
+end)
+btnFacility.MouseButton1Click:Connect(function()
+    saveManual("facility", posFacility, btnFacility, "Facility")
+end)
 
 -- =============================================
--- Pathfinding (anti-stuck + retry)
+-- Pathfinding — tanpa goto, pakai loop retry
 -- =============================================
 local function walkTo(targetPos, label)
+    local MAX_RETRY = 3
+
+    for attempt = 1, MAX_RETRY do
+        if not AI_ON then return false end
+
+        local char = LocalPlayer.Character
+        local hum  = resolveHum(char)
+        local hrp2 = resolveHRP(char)
+        if not hum or not hrp2 then return false end
+
+        setStatus("🚶 " .. (label or "...") .. (attempt > 1 and " (retry "..attempt..")" or ""),
+            Color3.fromRGB(80,180,255))
+
+        -- Compute path, angkat start kalau retry
+        local startPos = hrp2.Position + Vector3.new(0, attempt > 1 and 3 or 0, 0)
+
+        local path = PathfindingService:CreatePath({
+            AgentRadius     = 2,
+            AgentHeight     = 5,
+            AgentCanJump    = true,
+            AgentCanClimb   = true,
+            WaypointSpacing = 3,
+            Costs           = { Water = 100 },
+        })
+
+        local ok = pcall(function() path:ComputeAsync(startPos, targetPos) end)
+
+        if not ok or path.Status ~= Enum.PathStatus.Success then
+            task.wait(0.5)
+            -- jump biar tidak nyangkut
+            if hum then hum.Jump = true end
+            task.wait(0.3)
+            continue
+        end
+
+        local waypoints  = path:GetWaypoints()
+        local stuckTimer = 0
+        local lastPos    = hrp2.Position
+        local stuckDetected = false
+
+        for _, wp in ipairs(waypoints) do
+            if not AI_ON then return false end
+
+            if wp.Action == Enum.PathWaypointAction.Jump then
+                hum.Jump = true
+                task.wait(0.15)
+            end
+
+            hum:MoveTo(wp.Position)
+
+            -- Tunggu dengan stuck detection
+            local elapsed  = 0
+            local interval = 0.2
+            local timeout  = 4
+
+            while elapsed < timeout do
+                task.wait(interval)
+                elapsed += interval
+                if not AI_ON then return false end
+
+                local curHRP = resolveHRP(LocalPlayer.Character)
+                if not curHRP then break end
+                local curPos = curHRP.Position
+
+                if (curPos - wp.Position).Magnitude < 3 then break end
+
+                local moved = (curPos - lastPos).Magnitude
+                stuckTimer = moved < 0.4 and (stuckTimer + interval) or 0
+                lastPos = curPos
+
+                if stuckTimer >= 1.5 then
+                    -- Stuck! Jump dan break ke retry
+                    setStatus("⚠ Stuck — retry...", Color3.fromRGB(255,200,60))
+                    hum.Jump = true
+                    task.wait(0.5)
+                    stuckDetected = true
+                    break
+                end
+            end
+
+            if stuckDetected then break end
+        end
+
+        if stuckDetected then
+            task.wait(0.3)
+            continue -- ke attempt berikutnya
+        end
+
+        -- Cek apakah sampai tujuan
+        local finalHRP = resolveHRP(LocalPlayer.Character)
+        if finalHRP then
+            local dist = (finalHRP.Position - targetPos).Magnitude
+            if dist <= 12 then
+                return true -- berhasil!
+            end
+        end
+
+        task.wait(0.3)
+    end
+
+    -- Semua retry gagal — fallback Lerp
+    setStatus("⚠ Fallback gerak bertahap...", Color3.fromRGB(255,200,60))
     local char = LocalPlayer.Character
     local hum  = resolveHum(char)
-    local hrp2 = resolveHRP(char)
-    if not hum or not hrp2 then return false end
-
-    setStatus("🚶 " .. (label or "berjalan..."), Color3.fromRGB(80,180,255))
-
-    local path = PathfindingService:CreatePath({
-        AgentRadius     = 2,
-        AgentHeight     = 5,
-        AgentCanJump    = true,
-        AgentCanClimb   = true,
-        WaypointSpacing = 3,
-        Costs = { Water = 100 }
-    })
-
-    local MAX_RETRY = 3
-    local attempt   = 0
-
-    ::retry::
-    attempt += 1
-    if attempt > MAX_RETRY then
-        -- Fallback: gerak Lerp bertahap
-        setStatus("⚠ Fallback gerak bertahap...", Color3.fromRGB(255,200,60))
+    if hum then
         for i = 1, 6 do
             if not AI_ON then return false end
             local cur = resolveHRP(LocalPlayer.Character)
             if not cur then break end
-            local mid = cur.Position:Lerp(targetPos, 1/( 6-i+1))
+            local frac = 1 / (7 - i)
+            local mid  = cur.Position:Lerp(targetPos, frac)
             hum:MoveTo(mid)
             hum.MoveToFinished:Wait(3)
         end
-        return true
-    end
-
-    -- Coba compute, kalau gagal angkat start point
-    local startPos = resolveHRP(LocalPlayer.Character)
-    if not startPos then return false end
-    startPos = startPos.Position + Vector3.new(0, attempt > 1 and 3 or 0, 0)
-
-    pcall(function() path:ComputeAsync(startPos, targetPos) end)
-
-    if path.Status ~= Enum.PathStatus.Success then
-        task.wait(0.4)
-        goto retry
-    end
-
-    local waypoints  = path:GetWaypoints()
-    local stuckTimer = 0
-    local lastPos    = resolveHRP(LocalPlayer.Character)
-    lastPos = lastPos and lastPos.Position or Vector3.new()
-
-    for i, wp in ipairs(waypoints) do
-        if not AI_ON then return false end
-
-        if wp.Action == Enum.PathWaypointAction.Jump then
-            hum.Jump = true
-            task.wait(0.15)
-        end
-
-        hum:MoveTo(wp.Position)
-
-        -- Custom wait dengan stuck detection
-        local elapsed  = 0
-        local interval = 0.2
-        local timeout  = 4
-
-        while elapsed < timeout do
-            task.wait(interval)
-            elapsed += interval
-            if not AI_ON then return false end
-
-            local cur = resolveHRP(LocalPlayer.Character)
-            if not cur then break end
-            local curPos = cur.Position
-
-            -- Sampai waypoint?
-            if (curPos - wp.Position).Magnitude < 3 then break end
-
-            -- Stuck check
-            local moved = (curPos - lastPos).Magnitude
-            if moved < 0.4 then
-                stuckTimer += interval
-            else
-                stuckTimer = 0
-            end
-            lastPos = curPos
-
-            if stuckTimer >= 1.5 then
-                -- Stuck! Jump lalu recompute
-                setStatus("⚠ Stuck di waypoint "..i.." — retry", Color3.fromRGB(255,200,60))
-                hum.Jump = true
-                task.wait(0.5)
-                stuckTimer = 0
-                goto retry
-            end
-        end
-    end
-
-    -- Cek apakah sudah dekat tujuan
-    local finalHRP = resolveHRP(LocalPlayer.Character)
-    if finalHRP and (finalHRP.Position - targetPos).Magnitude > 12 then
-        task.wait(0.3)
-        goto retry
     end
 
     return true
@@ -453,7 +485,12 @@ local function collectPhase()
                 local bp = model.PrimaryPart or model:FindFirstChildWhichIsA("BasePart", true)
                 if bp then
                     local d = (bp.Position - hrp2.Position).Magnitude
-                    table.insert(targets, {prompt=prompt, pos=bp.Position, dist=d, name=model.Name})
+                    table.insert(targets, {
+                        prompt = prompt,
+                        pos    = bp.Position,
+                        dist   = d,
+                        name   = model.Name
+                    })
                 end
             end
         end
@@ -463,7 +500,7 @@ local function collectPhase()
             break
         end
 
-        table.sort(targets, function(a,b) return a.dist < b.dist end)
+        table.sort(targets, function(a, b) return a.dist < b.dist end)
         local t = targets[1]
 
         setStatus(string.format("🔍 [%d/%d] → %s", COL_COUNT+1, MAX_COL, t.name),
@@ -492,15 +529,14 @@ local function runAI()
     task.wait(1)
 
     while AI_ON do
-
         -- FASE 1: Island
         AI_STATE = "ISLAND"
         setStatus("🏝 Cari evidence di island...", Color3.fromRGB(80,220,130))
         collectPhase()
         if not AI_ON then break end
 
-        -- Kalau masih kurang → ke Lobby
         if COL_COUNT < MAX_COL then
+            -- FASE 2: Ke Lobby
             AI_STATE = "GOING_LOBBY"
             if savedPos.lobby then
                 walkTo(savedPos.lobby, "Lobby Lift")
@@ -511,13 +547,12 @@ local function runAI()
                 task.wait(4)
             end
 
-            -- FASE 2: Lobby
             AI_STATE = "LOBBY"
             setStatus("🏢 Cari evidence di Lobby...", Color3.fromRGB(80,220,130))
             collectPhase()
             if not AI_ON then break end
 
-            -- Balik ke island via Facility
+            -- FASE 3: Balik via Facility
             AI_STATE = "GOING_FACILITY"
             if savedPos.facility then
                 walkTo(savedPos.facility, "Facility Lift")
@@ -531,13 +566,13 @@ local function runAI()
 
         if not AI_ON then break end
 
-        -- FASE 3: Deposit
+        -- FASE 4: Deposit
         AI_STATE = "DEPOSIT"
         if savedPos.deposit then
             walkTo(savedPos.deposit, "Deposit Evidence")
             if not AI_ON then break end
             task.wait(0.5)
-            setStatus("⏳ Menunggu validasi server...", Color3.fromRGB(255,200,60))
+            setStatus("⏳ Menunggu validasi...", Color3.fromRGB(255,200,60))
             task.wait(4)
             local ok = pcall(function() fireproximityprompt(savedPrompts.deposit) end)
             setStatus(ok and "✅ Deposit berhasil!" or "❌ Deposit gagal",
