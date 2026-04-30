@@ -1,7 +1,5 @@
 -- ================================================================
---  SQUID GAME TOOL v9.2 — EMERGENCY TELEPORT EDITION
---  Prinsip: darurat = teleport langsung, bukan jalan-jalan linglung
---  Fix: collect radius normal, atap = teleport turun, nyasar = teleport WP
+--  SQUID GAME TOOL v10 — SMART AI EDITION
 --  By menzcreate | discord: menzcreate
 -- ================================================================
 
@@ -15,7 +13,7 @@ local LP = Players.LocalPlayer
 -- ================================================================
 --  CHARACTER HELPERS
 -- ================================================================
-local function getChar()  return LP.Character end
+local function getChar() return LP.Character end
 local function getHRP()
     local c = getChar(); if not c then return nil end
     return c:FindFirstChild("HumanoidRootPart")
@@ -134,7 +132,30 @@ local WP_ISLAND_BACK = {
 }
 
 -- ================================================================
---  ZONE
+--  CONFIG
+-- ================================================================
+local CFG = {
+    maxEvidence   = 8,
+    collectRadius = 35,
+    promptReach   = 8,
+    wpReach       = 6,
+    moveTimeout   = 12,
+    liftWait      = 10,
+    depositWait   = 3,
+    stopTimeout   = 0.4,
+    scanInterval  = 0.5,
+    speed         = 100,
+    jumpPower     = 70,
+    lobbyFloorY   = 100.64,
+    islandFloorY  = -787.0,
+    roofThreshold = 12,
+    lobbyXMin = 8095, lobbyXMax = 8230,
+    lobbyZMin = 3455, lobbyZMax = 3760,
+    lobbyYMin = 75,   lobbyYMax = 130,
+}
+
+-- ================================================================
+--  ZONE DETECTION
 -- ================================================================
 local ZONE_ISLAND_Y_MAX = -100
 local ZONE_LOBBY_Y_MIN  =  50
@@ -143,83 +164,52 @@ local function getZone(pos)
     if not pos then return "UNKNOWN" end
     if pos.Y >= ZONE_LOBBY_Y_MIN  then return "LOBBY"  end
     if pos.Y <= ZONE_ISLAND_Y_MAX then return "ISLAND" end
-    -- TRANSITION: cek jarak ke WP untuk tentukan zona terdekat
-    local dLobby, dIsland = math.huge, math.huge
+    local dL, dI = math.huge, math.huge
     for _, wp in ipairs(WP_LOBBY) do
-        local d = (wp - pos).Magnitude
-        if d < dLobby then dLobby = d end
+        local d = (wp - pos).Magnitude; if d < dL then dL = d end
     end
     for _, wp in ipairs(WP_ISLAND_TO_LIFT) do
-        local d = (wp - pos).Magnitude
-        if d < dIsland then dIsland = d end
+        local d = (wp - pos).Magnitude; if d < dI then dI = d end
     end
-    return dLobby < dIsland and "LOBBY" or "ISLAND"
+    return dL < dI and "LOBBY" or "ISLAND"
 end
 
 local function isInLobbyBounds(pos)
     if not pos then return false end
-    return pos.X >= 8095 and pos.X <= 8230
-       and pos.Z >= 3455 and pos.Z <= 3760
-       and pos.Y >= 75   and pos.Y <= 130
+    return pos.X >= CFG.lobbyXMin and pos.X <= CFG.lobbyXMax
+       and pos.Z >= CFG.lobbyZMin and pos.Z <= CFG.lobbyZMax
+       and pos.Y >= CFG.lobbyYMin and pos.Y <= CFG.lobbyYMax
+end
+
+local function isOnRoof(pos)
+    if not pos then return false end
+    local zone   = getZone(pos)
+    local floorY = zone == "LOBBY" and CFG.lobbyFloorY or CFG.islandFloorY
+    return (pos.Y - floorY) > CFG.roofThreshold
 end
 
 -- ================================================================
 --  NEAREST WP
 -- ================================================================
-local function nearestWpIndex(wpArray, pos, fromIdx, toIdx)
-    fromIdx = fromIdx or 1
-    toIdx   = toIdx   or #wpArray
+local function nearestWpIndex(arr, pos, fromIdx, toIdx)
+    fromIdx = fromIdx or 1; toIdx = toIdx or #arr
     local best, bestDist = fromIdx, math.huge
     for i = fromIdx, toIdx do
-        local d = (wpArray[i] - pos).Magnitude
+        local d = (arr[i] - pos).Magnitude
         if d < bestDist then bestDist = d; best = i end
     end
     return best
 end
 
 -- ================================================================
---  CONFIG
--- ================================================================
-local CFG = {
-    maxEvidence   = 8,
-    collectRadius = 30,   -- radius scan evidence (asli v9)
-    promptReach   = 8,
-    wpReach       = 7,
-    moveTimeout   = 14,
-    liftWait      = 9,
-    depositWait   = 3,
-    stopTimeout   = 0.5,
-    scanInterval  = 0.5,
-    speed         = 100,
-    jumpPower     = 70,
-    sanityMaxDist = 250,
-    sanityYMin    = -1200,
-    sanityYMax    =  500,
-    lobbyXMin = 8095, lobbyXMax = 8230,
-    lobbyZMin = 3455, lobbyZMax = 3760,
-    lobbyYMin = 75,   lobbyYMax = 130,
-
-    -- Y lantai normal untuk tiap zone — dipakai saat deteksi "di atap"
-    lobbyFloorY  = 100.64,
-    islandFloorY = -787.0,
-    -- Toleransi Y: kalau karakter lebih dari ini di atas floor = dianggap di atap
-    roofThreshold = 10,
-}
-
--- ================================================================
---  AI STATE
+--  STATE
 -- ================================================================
 local AI_ON        = false
 local aiPhase      = "ISLAND_TO_LIFT"
 local aiWpIndex    = 1
 local collected    = 0
 local liftAttempts = 0
-local lastSafePhase   = "ISLAND_TO_LIFT"
-local lastSafeWpIndex = 1
 
--- ================================================================
---  FEATURE FLAGS
--- ================================================================
 local SPEED_ON     = false
 local NOCLIP_ON    = false
 local HL_ON        = true
@@ -227,14 +217,15 @@ local BABY_ON      = false
 local AUTO_COLLECT = false
 local CLOSED       = false
 
-local foundModels = {}
-local highlights  = {}
+local foundModels       = {}
+local highlights        = {}
+local autoNoclipActive  = false
+local autoNoclipTimer   = 0
 
 -- ================================================================
---  SPEED / NOCLIP
+--  SPEED
 -- ================================================================
-local speedConn, noclipConn
-
+local speedConn
 local function startSpeedLoop()
     if speedConn then speedConn:Disconnect() end
     speedConn = RunService.Heartbeat:Connect(function()
@@ -246,36 +237,64 @@ local function startSpeedLoop()
         hum.JumpPower    = CFG.jumpPower
     end)
 end
-
 local function resetSpeed()
     local c = LP.Character; if not c then return end
     local hum = c:FindFirstChildOfClass("Humanoid"); if not hum then return end
     hum.WalkSpeed = 16; hum.JumpPower = 50
 end
+startSpeedLoop()
 
+-- ================================================================
+--  NOCLIP
+-- ================================================================
+local noclipConn
 local function startNoclip()
     if noclipConn then noclipConn:Disconnect() end
     noclipConn = RunService.Stepped:Connect(function()
-        if not NOCLIP_ON then return end
+        if not NOCLIP_ON and not autoNoclipActive then return end
         local c = LP.Character; if not c then return end
         for _, p in ipairs(c:GetDescendants()) do
             if p:IsA("BasePart") then p.CanCollide = false end
         end
     end)
 end
-
 local function stopNoclip()
+    if NOCLIP_ON or autoNoclipActive then return end
     local c = LP.Character; if not c then return end
     for _, p in ipairs(c:GetDescendants()) do
         if p:IsA("BasePart") then p.CanCollide = true end
     end
 end
-
-startSpeedLoop()
 startNoclip()
 
+-- Auto noclip timer
+task.spawn(function()
+    while true do
+        task.wait(0.1)
+        if CLOSED then break end
+        if autoNoclipActive then
+            autoNoclipTimer += 0.1
+            if autoNoclipTimer >= 2.5 then
+                autoNoclipActive = false
+                autoNoclipTimer  = 0
+                stopNoclip()
+            end
+        end
+    end
+end)
+
+local function enableAutoNoclip()
+    autoNoclipActive = true
+    autoNoclipTimer  = 0
+end
+local function disableAutoNoclip()
+    autoNoclipActive = false
+    autoNoclipTimer  = 0
+    stopNoclip()
+end
+
 -- ================================================================
---  HIGHLIGHT
+--  HIGHLIGHT — terang benderang
 -- ================================================================
 local function clearHighlights()
     for _, h in ipairs(highlights) do pcall(function() h:Destroy() end) end
@@ -284,10 +303,14 @@ end
 
 local function addHighlight(target, isNearest)
     local h = Instance.new("Highlight")
-    h.Parent              = target
-    h.FillColor           = isNearest and Color3.fromRGB(255,255,255) or Color3.fromRGB(180,180,180)
-    h.OutlineColor        = isNearest and Color3.fromRGB(255,255,255) or Color3.fromRGB(120,120,120)
-    h.FillTransparency    = isNearest and 0.25 or 0.6
+    h.Parent    = target
+    h.FillColor = isNearest
+        and Color3.fromRGB(255, 255,   0)  -- kuning cerah
+        or  Color3.fromRGB(  0, 255, 255)  -- cyan cerah
+    h.OutlineColor        = isNearest
+        and Color3.fromRGB(255, 200,   0)
+        or  Color3.fromRGB(  0, 200, 255)
+    h.FillTransparency    = isNearest and 0.0 or 0.2
     h.OutlineTransparency = 0
     h.DepthMode           = Enum.HighlightDepthMode.AlwaysOnTop
     table.insert(highlights, h)
@@ -332,159 +355,184 @@ local function getEvidenceFolder()
 end
 
 -- ================================================================
---  TELEPORT DARURAT — INTI DARI FIX INI
---  Langsung pindahkan karakter ke WP aman, tanpa jalan dulu
+--  EMERGENCY TELEPORT
 -- ================================================================
-local function emergencyTeleport(targetPos, reason)
-    local hrp = getHRP()
-    if not hrp then return end
-    updateStatus("🚨 " .. (reason or "Darurat") .. " → TP!", Color3.fromRGB(220,60,60))
+local function emergencyTP(targetPos, reason)
+    local hrp = getHRP(); if not hrp then return end
+    updateStatus("🚨 " .. (reason or "TP") .. "...", Color3.fromRGB(220,60,60))
     hrp.CFrame = CFrame.new(targetPos + Vector3.new(0, 4, 0))
-    task.wait(0.4)  -- beri waktu server acknowledge posisi baru
-end
-
--- Teleport ke WP terdekat untuk phase tertentu, return index WP
-local function emergencySnapToPhase(phase, currentPos)
-    local arr = nil
-    if phase == "LOBBY_FARM" or phase == "LOBBY_TO_LIFT" then
-        arr = WP_LOBBY
-    elseif phase == "ISLAND_TO_LIFT" then
-        arr = WP_ISLAND_TO_LIFT
-    elseif phase == "ISLAND_DEPOSIT" then
-        arr = WP_ISLAND_BACK
-    end
-    if not arr then return 1 end
-
-    local idx = nearestWpIndex(arr, currentPos)
-    emergencyTeleport(arr[idx], "Snap " .. phase .. " WP" .. idx)
-    return idx
+    task.wait(0.4)
 end
 
 -- ================================================================
---  CEK APAKAH KARAKTER DI ATAP
---  Bandingkan Y karakter dengan Y floor normal zone-nya
+--  SMART RECOVERY — cari WP terdekat dari SEMUA array
+--  Tidak terpacu phase, langsung adaptasi posisi sekarang
 -- ================================================================
-local function isOnRoof(pos)
-    if not pos then return false end
-    local zone = getZone(pos)
-    local floorY = (zone == "LOBBY") and CFG.lobbyFloorY or CFG.islandFloorY
-    -- Kalau Y karakter jauh DI ATAS floor normal = di atap
-    return (pos.Y - floorY) > CFG.roofThreshold
-end
-
--- ================================================================
---  SANITY CHECK
--- ================================================================
-local function isSane(pos, phase, wpIdx)
-    if not pos then return false, "NO_POS" end
-    if pos.Y < CFG.sanityYMin then return false, "FALL_OUT" end
-    if pos.Y > CFG.sanityYMax then return false, "TOO_HIGH" end
+local function smartRecovery(pos, hint)
+    if not pos then return end
 
     local zone = getZone(pos)
-    if (phase == "ISLAND_TO_LIFT" or phase == "ISLAND_DEPOSIT") and zone == "LOBBY" then
-        return false, "WRONG_ZONE_LOBBY"
-    end
-    if (phase == "LOBBY_FARM" or phase == "LOBBY_TO_LIFT") and zone == "ISLAND" then
-        return false, "WRONG_ZONE_ISLAND"
-    end
-    if (phase == "LOBBY_FARM" or phase == "LOBBY_TO_LIFT") and zone == "LOBBY" then
-        if not isInLobbyBounds(pos) then
-            return false, "OUT_LOBBY_BOUNDS"
-        end
-    end
+    updateStatus("🔄 Smart recovery [" .. zone .. "]...", Color3.fromRGB(255,200,60))
 
-    local wpArray = nil
-    if phase == "ISLAND_TO_LIFT"  then wpArray = WP_ISLAND_TO_LIFT end
-    if phase == "LOBBY_FARM"      then wpArray = WP_LOBBY          end
-    if phase == "LOBBY_TO_LIFT"   then wpArray = WP_LOBBY          end
-    if phase == "ISLAND_DEPOSIT"  then wpArray = WP_ISLAND_BACK    end
-
-    if wpArray and wpIdx and wpIdx >= 1 and wpIdx <= #wpArray then
-        local dist = (pos - wpArray[wpIdx]).Magnitude
-        if dist > CFG.sanityMaxDist then
-            return false, "TOO_FAR:" .. math.floor(dist)
-        end
-    end
-
-    return true, "OK"
-end
-
--- ================================================================
---  PHASE DETECTION
--- ================================================================
-local function detectPhaseFromPosition(pos, prevPhase, prevCollected)
-    if not pos then return "ISLAND_TO_LIFT", 1 end
-    local zone = getZone(pos)
+    -- Tentukan phase berdasarkan zone + collected
+    local newPhase, newIdx
 
     if zone == "LOBBY" then
-        if prevCollected and prevCollected >= CFG.maxEvidence then
-            local idx = nearestWpIndex(WP_LOBBY, pos, 30, #WP_LOBBY)
-            return "LOBBY_TO_LIFT", idx
+        if collected >= CFG.maxEvidence then
+            newPhase = "LOBBY_TO_LIFT"
+            newIdx   = nearestWpIndex(WP_LOBBY, pos, 33, #WP_LOBBY)
         else
-            return "LOBBY_FARM", nearestWpIndex(WP_LOBBY, pos)
+            newPhase = "LOBBY_FARM"
+            newIdx   = nearestWpIndex(WP_LOBBY, pos)
         end
+        -- Kalau di luar bounds lobby, snap ke WP lobby terdekat
+        if not isInLobbyBounds(pos) then
+            local snap = WP_LOBBY[newIdx]
+            emergencyTP(snap, "TP bounds lobby")
+        end
+
     elseif zone == "ISLAND" then
-        if prevPhase == "ISLAND_DEPOSIT" or prevPhase == "LOBBY_TO_LIFT" or prevPhase == "LOBBY_FARM" then
-            return "ISLAND_DEPOSIT", nearestWpIndex(WP_ISLAND_BACK, pos)
+        if collected >= CFG.maxEvidence or hint == "DEPOSIT" then
+            newPhase = "ISLAND_DEPOSIT"
+            newIdx   = nearestWpIndex(WP_ISLAND_BACK, pos)
         else
-            return "ISLAND_TO_LIFT", nearestWpIndex(WP_ISLAND_TO_LIFT, pos)
+            -- Cari dari kedua array island, mana yang lebih dekat
+            local idxToLift = nearestWpIndex(WP_ISLAND_TO_LIFT, pos)
+            local idxBack   = nearestWpIndex(WP_ISLAND_BACK, pos)
+            local dToLift   = (WP_ISLAND_TO_LIFT[idxToLift] - pos).Magnitude
+            local dBack     = (WP_ISLAND_BACK[idxBack] - pos).Magnitude
+            if dBack < dToLift and collected > 0 then
+                newPhase = "ISLAND_DEPOSIT"
+                newIdx   = idxBack
+            else
+                newPhase = "ISLAND_TO_LIFT"
+                newIdx   = idxToLift
+            end
+        end
+    else
+        -- Unknown zone — cari dari semua
+        local candidates = {
+            { phase="ISLAND_TO_LIFT", arr=WP_ISLAND_TO_LIFT },
+            { phase="LOBBY_FARM",     arr=WP_LOBBY           },
+            { phase="ISLAND_DEPOSIT", arr=WP_ISLAND_BACK     },
+        }
+        local bestDist = math.huge
+        newPhase = "ISLAND_TO_LIFT"; newIdx = 1
+        for _, c in ipairs(candidates) do
+            local idx = nearestWpIndex(c.arr, pos)
+            local d   = (c.arr[idx] - pos).Magnitude
+            if d < bestDist then
+                bestDist = d; newPhase = c.phase; newIdx = idx
+            end
         end
     end
-    return prevPhase or "ISLAND_TO_LIFT", 1
+
+    -- Teleport ke WP yang dipilih
+    local arr = WP_ISLAND_TO_LIFT
+    if newPhase == "LOBBY_FARM" or newPhase == "LOBBY_TO_LIFT" then
+        arr = WP_LOBBY
+    elseif newPhase == "ISLAND_DEPOSIT" then
+        arr = WP_ISLAND_BACK
+    end
+
+    local hrp = getHRP()
+    if hrp then
+        hrp.CFrame = CFrame.new(arr[newIdx] + Vector3.new(0, 4, 0))
+        task.wait(0.4)
+    end
+
+    aiPhase   = newPhase
+    aiWpIndex = math.min(newIdx + 1, #arr)
+    liftAttempts = 0
+    updatePhase(aiPhase)
+    updateStatus(string.format("✅ Recovery → %s WP%d", aiPhase, aiWpIndex),
+        Color3.fromRGB(100,220,140))
 end
 
 -- ================================================================
---  WALK TO — dengan deteksi stuck, langsung TP kalau stuck lama
+--  RUN TO — run animation, auto noclip saat stuck
 -- ================================================================
-local function walkTo(target, timeoutSec)
+local function runTo(target, timeoutSec)
     local hu = getHum(); local h = getHRP()
     if not hu or not h then return false end
     if (h.Position - target).Magnitude <= CFG.wpReach then return true end
 
+    -- Force run speed
+    hu.WalkSpeed    = CFG.speed
+    hu.UseJumpPower = true
+    hu.JumpPower    = CFG.jumpPower
     hu:MoveTo(target)
 
     local t          = 0
     local limit      = timeoutSec or CFG.moveTimeout
     local lastPos    = h.Position
     local stuckTimer = 0
+    local stuckCount = 0
 
     while t < limit do
         task.wait(0.1); t += 0.1
-        if not AI_ON then return false end
-        local cur = getHRP(); if not cur then return false end
-        if (cur.Position - target).Magnitude <= CFG.wpReach then return true end
+        if not AI_ON then disableAutoNoclip(); return false end
 
-        if t % 1.0 < 0.11 then
-            local hu2 = getHum()
+        local cur = getHRP(); if not cur then return false end
+        local hu2 = getHum()
+
+        -- Force speed tiap tick
+        if hu2 then
+            hu2.WalkSpeed    = CFG.speed
+            hu2.UseJumpPower = true
+            hu2.JumpPower    = CFG.jumpPower
+        end
+
+        if (cur.Position - target).Magnitude <= CFG.wpReach then
+            disableAutoNoclip(); return true
+        end
+
+        -- Re-issue MoveTo tiap 0.7 detik
+        if t % 0.7 < 0.11 then
             if hu2 then hu2:MoveTo(target) end
         end
 
         local moved = (cur.Position - lastPos).Magnitude
-        if moved < 0.4 then
+
+        if moved < 0.5 then
             stuckTimer += 0.1
-            if stuckTimer >= 2.0 then
-                -- Coba jump dulu
-                local hu2 = getHum()
+            if stuckTimer >= 1.0 then
                 if hu2 then hu2.Jump = true end
-                stuckTimer = 0
             end
-            -- Kalau stuck lebih dari 5 detik → teleport langsung ke target
-            if stuckTimer == 0 and t > 5 and (cur.Position - target).Magnitude > CFG.wpReach * 2 then
-                emergencyTeleport(target, "Stuck >5s")
-                return true
+            if stuckTimer >= 1.8 then
+                stuckCount += 1
+                stuckTimer  = 0
+                if stuckCount == 1 then
+                    -- Obstacle → enable auto noclip
+                    enableAutoNoclip()
+                    updateStatus("👻 Obstacle → noclip", Color3.fromRGB(200,100,255))
+                    task.wait(0.3)
+                elseif stuckCount == 2 then
+                    -- Masih stuck → jump lagi + tunggu
+                    if hu2 then hu2.Jump = true end
+                    task.wait(0.5)
+                elseif stuckCount >= 3 then
+                    -- Hopeless → teleport langsung
+                    emergencyTP(target, "Stuck 3x")
+                    disableAutoNoclip(); return true
+                end
             end
         else
             stuckTimer = 0
+            if autoNoclipActive and moved > 2 then
+                autoNoclipTimer += 0.3
+            end
         end
+
         lastPos = cur.Position
     end
 
-    -- Timeout habis → teleport langsung ke target daripada linglung
-    local finalHrp = getHRP()
-    if finalHrp and (finalHrp.Position - target).Magnitude > CFG.wpReach * 3 then
-        emergencyTeleport(target, "Timeout TP")
+    -- Timeout
+    local finalHRP = getHRP()
+    if finalHRP and (finalHRP.Position - target).Magnitude > CFG.wpReach * 3 then
+        emergencyTP(target, "Timeout")
     end
-    return false
+    disableAutoNoclip(); return false
 end
 
 -- ================================================================
@@ -492,18 +540,17 @@ end
 -- ================================================================
 local function firePromptAt(prompt, pos)
     if not prompt or not pos then return false end
-    local hu = getHum(); local h = getHRP()
-    if not hu or not h then return false end
+    local h = getHRP(); if not h then return false end
 
-    if (h.Position - pos).Magnitude > CFG.promptReach then
-        -- Kalau jauh → teleport langsung ke sana, bukan jalan
-        local hrp = getHRP()
-        if hrp and (hrp.Position - pos).Magnitude > CFG.promptReach * 3 then
-            emergencyTeleport(pos, "TP ke prompt")
-        else
+    if (h.Position - pos).Magnitude > CFG.promptReach * 3 then
+        emergencyTP(pos, "TP prompt")
+    elseif (h.Position - pos).Magnitude > CFG.promptReach then
+        local hu = getHum()
+        if hu then
+            hu.WalkSpeed = CFG.speed
             hu:MoveTo(pos)
             local t = 0
-            while t < 5 do
+            while t < 4 do
                 task.wait(0.1); t += 0.1
                 if not AI_ON then return false end
                 local cur = getHRP(); if not cur then return false end
@@ -516,7 +563,6 @@ local function firePromptAt(prompt, pos)
     if hu2 and h2 then hu2:MoveTo(h2.Position) end
     task.wait(CFG.stopTimeout)
     if not AI_ON then return false end
-
     local ok = pcall(function() fireproximityprompt(prompt) end)
     task.wait(0.3)
     return ok
@@ -524,34 +570,22 @@ end
 
 -- ================================================================
 --  COLLECT NEARBY
---  Kembali ke logika v9 asli yang terbukti bekerja,
---  ditambah: kalau di atap → teleport turun dulu sebelum collect
 -- ================================================================
 local function collectNearby()
     if collected >= CFG.maxEvidence then return end
     local folder = getEvidenceFolder(); if not folder then return end
     local h = getHRP(); if not h then return end
 
-    -- Cek dulu apakah karakter di atap
+    -- Atap check
     if isOnRoof(h.Position) then
-        updateStatus("🚨 Di atap! TP turun...", Color3.fromRGB(220,60,60))
-        -- Teleport ke posisi sama tapi Y = floor normal + 4
-        local zone = getZone(h.Position)
-        local floorY = (zone == "LOBBY") and CFG.lobbyFloorY or CFG.islandFloorY
-        local safePos = Vector3.new(h.Position.X, floorY + 4, h.Position.Z)
+        local zone   = getZone(h.Position)
+        local floorY = zone == "LOBBY" and CFG.lobbyFloorY or CFG.islandFloorY
         local hrp = getHRP()
         if hrp then
-            hrp.CFrame = CFrame.new(safePos)
+            hrp.CFrame = CFrame.new(Vector3.new(hrp.Position.X, floorY + 4, hrp.Position.Z))
             task.wait(0.5)
         end
-        -- Refresh posisi setelah teleport
-        h = getHRP()
-        if not h then return end
-        -- Kalau masih di atap setelah teleport → snap ke WP terdekat
-        if isOnRoof(h.Position) then
-            aiWpIndex = emergencySnapToPhase(aiPhase, h.Position)
-            return
-        end
+        h = getHRP(); if not h then return end
     end
 
     local nearby = {}
@@ -562,12 +596,12 @@ local function collectNearby()
             if bp then
                 local d = (bp.Position - h.Position).Magnitude
                 if d <= CFG.collectRadius then
-                    local inSafeZone = true
+                    local inZone = true
                     if aiPhase == "LOBBY_FARM" or aiPhase == "LOBBY_TO_LIFT" then
-                        inSafeZone = isInLobbyBounds(bp.Position)
+                        inZone = isInLobbyBounds(bp.Position)
                     end
-                    if inSafeZone then
-                        table.insert(nearby, { prompt=pr, pos=bp.Position, d=d, name=model.Name })
+                    if inZone then
+                        table.insert(nearby, {prompt=pr, pos=bp.Position, d=d, name=model.Name})
                     end
                 end
             end
@@ -575,48 +609,36 @@ local function collectNearby()
     end
 
     if #nearby == 0 then return end
-    table.sort(nearby, function(a, b) return a.d < b.d end)
+    table.sort(nearby, function(a,b) return a.d < b.d end)
 
     for _, ev in ipairs(nearby) do
         if not AI_ON then return end
         if collected >= CFG.maxEvidence then break end
 
-        if aiPhase == "LOBBY_FARM" or aiPhase == "LOBBY_TO_LIFT" then
-            if not isInLobbyBounds(ev.pos) then continue end
-        end
-
-        updateStatus("📦 " .. ev.name, nil)
-
-        -- Coba fire langsung dulu (biasa)
+        updateStatus("📦 " .. ev.name, Color3.fromRGB(100,220,140))
         pcall(function() fireproximityprompt(ev.prompt) end)
         task.wait(0.15)
 
-        -- Kalau masih ada (jauh) → fire dengan approach
-        if ev.d > 10 then
-            firePromptAt(ev.prompt, ev.pos)
-        end
+        if ev.d > 12 then firePromptAt(ev.prompt, ev.pos) end
 
         collected += 1
         updateCount(collected)
         task.wait(0.15)
 
-        -- Cek posisi setelah collect — kalau tiba-tiba di atap, TP turun
+        -- Post-collect roof check
         local postH = getHRP()
         if postH and isOnRoof(postH.Position) then
-            updateStatus("🚨 Naik atap saat collect! TP turun...", Color3.fromRGB(220,60,60))
-            local zone = getZone(postH.Position)
-            local floorY = (zone == "LOBBY") and CFG.lobbyFloorY or CFG.islandFloorY
-            postH.CFrame = CFrame.new(postH.Position.X, floorY + 4, postH.Position.Z)
+            local zone   = getZone(postH.Position)
+            local floorY = zone == "LOBBY" and CFG.lobbyFloorY or CFG.islandFloorY
+            postH.CFrame = CFrame.new(Vector3.new(postH.Position.X, floorY+4, postH.Position.Z))
             task.wait(0.4)
         end
 
-        -- Cek keluar lobby bounds
-        local checkH = getHRP()
-        if checkH then
-            if (aiPhase == "LOBBY_FARM" or aiPhase == "LOBBY_TO_LIFT") and
-               not isInLobbyBounds(checkH.Position) then
-                updateStatus("🚨 Keluar bounds! TP balik...", Color3.fromRGB(220,60,60))
-                aiWpIndex = emergencySnapToPhase(aiPhase, checkH.Position)
+        -- Post-collect bounds check
+        local chkH = getHRP()
+        if chkH and (aiPhase == "LOBBY_FARM" or aiPhase == "LOBBY_TO_LIFT") then
+            if not isInLobbyBounds(chkH.Position) then
+                smartRecovery(chkH.Position)
                 break
             end
         end
@@ -645,7 +667,7 @@ local babyAction = remotes and remotes:FindFirstChild("BabyAction")
 if babyAction then
     pcall(function()
         babyAction.OnClientEvent:Connect(function(...)
-            if select(1, ...) == "dropBaby" and BABY_ON then
+            if select(1,...) == "dropBaby" and BABY_ON then
                 task.wait(0.15); fireAllBabyPrompts()
             end
         end)
@@ -662,7 +684,7 @@ end
 --  GUI
 -- ================================================================
 local gui = Instance.new("ScreenGui", LP:WaitForChild("PlayerGui"))
-gui.Name = "SQv9"; gui.ResetOnSpawn = false
+gui.Name = "SQv10"; gui.ResetOnSpawn = false
 
 local C = {
     bg0    = Color3.fromRGB(8,   8,  10),
@@ -693,24 +715,24 @@ local mStroke = Instance.new("UIStroke", mainFrame)
 mStroke.Color = C.border; mStroke.Thickness = 1
 
 local header = Instance.new("Frame", mainFrame)
-header.Size             = UDim2.new(1, 0, 0, 44)
+header.Size             = UDim2.new(1,0,0,44)
 header.BackgroundColor3 = C.bg1
 header.BorderSizePixel  = 0; header.ZIndex = 3
-Instance.new("UICorner", header).CornerRadius = UDim.new(0, 12)
+Instance.new("UICorner", header).CornerRadius = UDim.new(0,12)
 local hPatch = Instance.new("Frame", header)
 hPatch.Size = UDim2.new(1,0,0.5,0); hPatch.Position = UDim2.new(0,0,0.5,0)
 hPatch.BackgroundColor3 = C.bg1; hPatch.BorderSizePixel = 0; hPatch.ZIndex = 3
 
 local titleTxt = Instance.new("TextLabel", header)
 titleTxt.Size = UDim2.new(1,-100,0,22); titleTxt.Position = UDim2.new(0,14,0,4)
-titleTxt.BackgroundTransparency = 1; titleTxt.Text = "🦑  SQ Tool v9.2"
+titleTxt.BackgroundTransparency = 1; titleTxt.Text = "🦑  SQ Tool v10"
 titleTxt.TextColor3 = C.accent; titleTxt.Font = Enum.Font.GothamBold
 titleTxt.TextSize = 13; titleTxt.TextXAlignment = Enum.TextXAlignment.Left; titleTxt.ZIndex = 4
 
 local subTxt = Instance.new("TextLabel", header)
 subTxt.Size = UDim2.new(1,-100,0,12); subTxt.Position = UDim2.new(0,14,0,27)
 subTxt.BackgroundTransparency = 1; subTxt.Text = "© menzcreate  |  discord: menzcreate"
-subTxt.TextColor3 = Color3.fromRGB(130,130,145); subTxt.Font = Enum.Font.Gotham
+subTxt.TextColor3 = Color3.fromRGB(100,100,120); subTxt.Font = Enum.Font.Gotham
 subTxt.TextSize = 9; subTxt.TextXAlignment = Enum.TextXAlignment.Left; subTxt.ZIndex = 4
 
 local minBtn = Instance.new("TextButton", header)
@@ -727,6 +749,7 @@ closeBtn.Font = Enum.Font.GothamBold; closeBtn.TextSize = 13; closeBtn.Text = "�
 closeBtn.AutoButtonColor = false; closeBtn.BorderSizePixel = 0; closeBtn.ZIndex = 5
 Instance.new("UICorner", closeBtn).CornerRadius = UDim.new(0,6)
 
+-- Float container
 local floatContainer = Instance.new("Frame", gui)
 floatContainer.Size = UDim2.new(0,44,0,98)
 floatContainer.Position = UDim2.new(0,14,0,14)
@@ -754,10 +777,11 @@ local function updateMiniAiBtn()
     if AI_ON then
         miniAiBtn.BackgroundColor3 = C.green; miniAiStroke.Color = C.ok
     else
-        miniAiBtn.BackgroundColor3 = C.off;   miniAiStroke.Color = C.border
+        miniAiBtn.BackgroundColor3 = C.off; miniAiStroke.Color = C.border
     end
 end
 
+-- Status & info
 local statusBar = Instance.new("Frame", mainFrame)
 statusBar.Size = UDim2.new(1,-16,0,22); statusBar.Position = UDim2.new(0,8,0,50)
 statusBar.BackgroundColor3 = C.bg2; statusBar.BorderSizePixel = 0; statusBar.ZIndex = 3
@@ -785,10 +809,11 @@ phaseTxt.BackgroundTransparency = 1; phaseTxt.Text = "Phase: —"
 phaseTxt.TextColor3 = C.dim; phaseTxt.Font = Enum.Font.Code
 phaseTxt.TextSize = 9; phaseTxt.TextXAlignment = Enum.TextXAlignment.Right; phaseTxt.ZIndex = 4
 
-local div = Instance.new("Frame", mainFrame)
-div.Size = UDim2.new(1,-16,0,1); div.Position = UDim2.new(0,8,0,100)
-div.BackgroundColor3 = C.border; div.BorderSizePixel = 0; div.ZIndex = 3
+local divLine = Instance.new("Frame", mainFrame)
+divLine.Size = UDim2.new(1,-16,0,1); divLine.Position = UDim2.new(0,8,0,100)
+divLine.BackgroundColor3 = C.border; divLine.BorderSizePixel = 0; divLine.ZIndex = 3
 
+-- Toggle rows
 local ROW_H = 34; local ROW_GAP = 4; local ROW_Y = 108
 local function mkToggleRow(label, icon, yPos)
     local row = Instance.new("Frame", mainFrame)
@@ -852,13 +877,13 @@ hintTxt.BackgroundTransparency = 1; hintTxt.Text = "RightCtrl = hide/show"
 hintTxt.TextColor3 = Color3.fromRGB(35,35,45); hintTxt.Font = Enum.Font.Gotham
 hintTxt.TextSize = 9; hintTxt.TextXAlignment = Enum.TextXAlignment.Left; hintTxt.ZIndex = 3
 
+-- Confirm close
 local confirmFrame = Instance.new("Frame", gui)
 confirmFrame.Size = UDim2.new(0,220,0,100); confirmFrame.Position = UDim2.new(0.5,-110,0.5,-50)
 confirmFrame.BackgroundColor3 = C.bg1; confirmFrame.BorderSizePixel = 0
 confirmFrame.Visible = false; confirmFrame.ZIndex = 20
 Instance.new("UICorner", confirmFrame).CornerRadius = UDim.new(0,12)
-local cStroke = Instance.new("UIStroke", confirmFrame)
-cStroke.Color = C.red; cStroke.Thickness = 1
+Instance.new("UIStroke", confirmFrame).Color = C.red
 
 local confirmTxt = Instance.new("TextLabel", confirmFrame)
 confirmTxt.Size = UDim2.new(1,-16,0,40); confirmTxt.Position = UDim2.new(0,8,0,10)
@@ -916,6 +941,7 @@ floatBtn.MouseButton1Click:Connect(function() setMinimized(false) end)
 local function shutdownAll()
     CLOSED = true; AI_ON = false; SPEED_ON = false
     NOCLIP_ON = false; HL_ON = false; BABY_ON = false
+    autoNoclipActive = false
     stopNoclip(); clearHighlights(); resetSpeed()
     if speedConn  then speedConn:Disconnect()  end
     if noclipConn then noclipConn:Disconnect() end
@@ -980,6 +1006,8 @@ local function toggleAI()
         updateStatus("🤖 AI Farming aktif", C.info)
         task.spawn(runAI)
     else
+        autoNoclipActive = false
+        stopNoclip()
         local hu = getHum(); local h = getHRP()
         if hu and h then hu:MoveTo(h.Position) end
         updateStatus("⏹ AI dihentikan", C.dim)
@@ -998,8 +1026,7 @@ task.spawn(function()
         if CLOSED then break end
         local h = getHRP()
         if not h or not h.Parent then task.wait(1); continue end
-        local folder = getEvidenceFolder()
-        if not folder then continue end
+        local folder = getEvidenceFolder(); if not folder then continue end
 
         clearHighlights()
         foundModels = {}
@@ -1043,39 +1070,25 @@ LP.CharacterAdded:Connect(function(char)
             hum.JumpPower    = CFG.jumpPower
         end
     end
-
     if not AI_ON then return end
-    task.wait(1.2)
-
+    task.wait(1)
     local h = getHRP(); if not h then return end
-    local newPhase, newWp = detectPhaseFromPosition(h.Position, aiPhase, collected)
-    aiPhase      = newPhase
-    aiWpIndex    = newWp
-    liftAttempts = 0
-    updatePhase(aiPhase)
-    updateStatus(string.format("🔄 Respawn → %s WP%d", aiPhase, aiWpIndex), C.warn)
+    -- Smart recovery langsung setelah respawn
+    smartRecovery(h.Position)
+    updateStatus("🔄 Respawn → recovery", C.warn)
 end)
 
 -- ================================================================
---  MAIN AI LOOP
+--  MAIN AI LOOP — SMART STATE MACHINE
 -- ================================================================
 function runAI()
     task.wait(0.5)
-
     local h = getHRP()
-    if h then
-        local newPhase, newWp = detectPhaseFromPosition(h.Position, aiPhase, collected)
-        aiPhase   = newPhase
-        aiWpIndex = newWp
-        liftAttempts = 0
-        updateStatus(string.format("📍 Deteksi: %s WP%d", aiPhase, aiWpIndex), C.warn)
-    end
-    updatePhase(aiPhase)
+    if h then smartRecovery(h.Position) end
     updateCount(collected)
     task.wait(0.5)
 
-    local lastSanityCheck = tick()
-    local SANITY_INTERVAL = 0.5
+    local lastCheck = tick()
 
     while AI_ON do
         if CLOSED then break end
@@ -1083,94 +1096,71 @@ function runAI()
         local h2 = getHRP(); local hu = getHum()
         if not h2 or not hu then task.wait(0.5); continue end
 
-        -- ────────────────────────────────────────────────────
-        --  CEK ATAP — prioritas tinggi, sebelum sanity lainnya
-        --  Kalau di atap → langsung teleport turun
-        -- ────────────────────────────────────────────────────
+        -- ── Atap check — prioritas tertinggi ──
         if isOnRoof(h2.Position) then
-            local zone = getZone(h2.Position)
-            local floorY = (zone == "LOBBY") and CFG.lobbyFloorY or CFG.islandFloorY
-            emergencyTeleport(
-                Vector3.new(h2.Position.X, floorY, h2.Position.Z),
-                "Di atap! TP lantai"
-            )
-            task.wait(0.3)
-            continue
+            local zone   = getZone(h2.Position)
+            local floorY = zone == "LOBBY" and CFG.lobbyFloorY or CFG.islandFloorY
+            emergencyTP(Vector3.new(h2.Position.X, floorY, h2.Position.Z), "Di atap")
+            task.wait(0.3); continue
         end
 
-        -- ────────────────────────────────────────────────────
-        --  SANITY CHECK — kalau nyasar, teleport langsung
-        -- ────────────────────────────────────────────────────
-        if tick() - lastSanityCheck >= SANITY_INTERVAL then
-            lastSanityCheck = tick()
-            local sane, reason = isSane(h2.Position, aiPhase, aiWpIndex)
-            if not sane then
-                updateStatus("⚠ Nyasar [" .. reason .. "]", C.red)
-                task.wait(0.2)
+        -- ── Sanity: zone vs phase ──
+        if tick() - lastCheck >= 0.8 then
+            lastCheck = tick()
+            local zone = getZone(h2.Position)
+            local phaseMismatch = false
 
-                local newPhase, newWp = detectPhaseFromPosition(h2.Position, lastSafePhase, collected)
-                aiPhase      = newPhase
-                aiWpIndex    = newWp
-                liftAttempts = 0
+            if (aiPhase == "ISLAND_TO_LIFT" or aiPhase == "ISLAND_DEPOSIT") and zone == "LOBBY" then
+                phaseMismatch = true
+            elseif (aiPhase == "LOBBY_FARM" or aiPhase == "LOBBY_TO_LIFT") and zone == "ISLAND" then
+                phaseMismatch = true
+            elseif (aiPhase == "LOBBY_FARM" or aiPhase == "LOBBY_TO_LIFT") and not isInLobbyBounds(h2.Position) then
+                phaseMismatch = true
+            end
 
-                -- TELEPORT langsung ke WP aman, tidak jalan dulu
-                local hrpNow = getHRP()
-                if hrpNow then
-                    aiWpIndex = emergencySnapToPhase(newPhase, hrpNow.Position)
-                end
-
-                updatePhase(aiPhase)
-                task.wait(0.3)
-                continue
-            else
-                lastSafePhase   = aiPhase
-                lastSafeWpIndex = aiWpIndex
+            if phaseMismatch then
+                updateStatus("⚠ Zone mismatch → recovery", C.red)
+                smartRecovery(h2.Position)
+                task.wait(0.3); continue
             end
         end
 
         updatePhase(aiPhase)
 
-        -- ════════════════════════════════════════════════════
+        -- ════════════════════════════════
         --  PHASE 1: ISLAND → LIFT LOBBY
-        -- ════════════════════════════════════════════════════
+        -- ════════════════════════════════
         if aiPhase == "ISLAND_TO_LIFT" then
 
             if getZone(h2.Position) == "LOBBY" then
-                aiPhase   = "LOBBY_FARM"
+                aiPhase = "LOBBY_FARM"
                 aiWpIndex = nearestWpIndex(WP_LOBBY, h2.Position)
-                liftAttempts = 0
-                collected = 0; updateCount(0)
-                updateStatus("✅ Masuk lobby → farming WP" .. aiWpIndex, C.ok)
+                liftAttempts = 0; collected = 0; updateCount(0)
                 continue
             end
 
             if aiWpIndex > #WP_ISLAND_TO_LIFT then
                 if liftAttempts >= 4 then
-                    updateStatus("❌ Lift gagal 4x → reset", C.red)
-                    aiWpIndex    = nearestWpIndex(WP_ISLAND_TO_LIFT, h2.Position)
-                    liftAttempts = 0
-                    task.wait(1); continue
+                    updateStatus("❌ Lift 4x gagal → reset WP", C.red)
+                    aiWpIndex = nearestWpIndex(WP_ISLAND_TO_LIFT, h2.Position)
+                    liftAttempts = 0; task.wait(1); continue
                 end
-
-                updateStatus("🛗 Lift Lobby... (" .. liftAttempts .. ")", C.info)
+                updateStatus("🛗 Lobby lift... (" .. liftAttempts .. ")", C.info)
                 local pr, pos = findPromptByText("Lobby")
                 if pr then
                     firePromptAt(pr, pos)
-                    local waited = 0
-                    while waited < CFG.liftWait do
-                        task.wait(0.3); waited += 0.3
+                    local w = 0
+                    while w < CFG.liftWait do
+                        task.wait(0.3); w += 0.3
                         if not AI_ON then break end
                         if getZone(getHRP() and getHRP().Position) == "LOBBY" then break end
                     end
                     if not AI_ON then break end
-
                     local nh = getHRP()
                     if nh and getZone(nh.Position) == "LOBBY" then
-                        aiPhase   = "LOBBY_FARM"
+                        aiPhase = "LOBBY_FARM"
                         aiWpIndex = nearestWpIndex(WP_LOBBY, nh.Position)
-                        liftAttempts = 0
-                        collected = 0; updateCount(0)
-                        updateStatus("✅ Masuk lobby!", C.ok)
+                        liftAttempts = 0; collected = 0; updateCount(0)
                     else
                         liftAttempts += 1
                         aiWpIndex = math.max(1, #WP_ISLAND_TO_LIFT - 2)
@@ -1184,125 +1174,97 @@ function runAI()
                 continue
             end
 
-            local target = WP_ISLAND_TO_LIFT[aiWpIndex]
-            updateStatus(string.format("🚶 Island→Lift %d/%d", aiWpIndex, #WP_ISLAND_TO_LIFT), C.info)
-            walkTo(target, CFG.moveTimeout)
+            updateStatus(string.format("🏃 Island→Lift %d/%d ev%d",
+                aiWpIndex, #WP_ISLAND_TO_LIFT, collected), C.info)
+            runTo(WP_ISLAND_TO_LIFT[aiWpIndex], CFG.moveTimeout)
+            if not AI_ON then break end
+            collectNearby()
             if not AI_ON then break end
             aiWpIndex += 1
 
-        -- ════════════════════════════════════════════════════
+        -- ════════════════════════════════
         --  PHASE 2: LOBBY FARMING
-        -- ════════════════════════════════════════════════════
+        -- ════════════════════════════════
         elseif aiPhase == "LOBBY_FARM" then
 
             if getZone(h2.Position) == "ISLAND" then
-                local p, w = detectPhaseFromPosition(h2.Position, aiPhase, collected)
-                aiPhase = p; aiWpIndex = w
-                updateStatus("⚠ Terpental ke island → TP balik", C.warn)
-                -- Teleport ke WP lobby terdekat
-                aiWpIndex = emergencySnapToPhase("LOBBY_FARM", h2.Position)
-                continue
+                smartRecovery(h2.Position); continue
             end
-
             if not isInLobbyBounds(h2.Position) then
-                updateStatus("🚨 Keluar lobby bounds! TP balik...", C.red)
-                aiWpIndex = emergencySnapToPhase("LOBBY_FARM", h2.Position)
-                continue
+                smartRecovery(h2.Position); continue
             end
-
             if collected >= CFG.maxEvidence then
-                aiPhase   = "LOBBY_TO_LIFT"
+                aiPhase = "LOBBY_TO_LIFT"
                 aiWpIndex = nearestWpIndex(WP_LOBBY, h2.Position, 33, #WP_LOBBY)
-                liftAttempts = 0
-                updateStatus("💼 Penuh! → lift WP" .. aiWpIndex, C.ok)
-                continue
+                liftAttempts = 0; continue
             end
-
             if aiWpIndex > #WP_LOBBY then
-                aiPhase   = "LOBBY_TO_LIFT"
-                aiWpIndex = nearestWpIndex(WP_LOBBY, h2.Position, 33, #WP_LOBBY)
-                liftAttempts = 0
-                updateStatus("🔄 Putaran selesai → lift", C.warn)
-                continue
+                -- Sudah habis putar tapi belum penuh → ulang dari awal
+                aiWpIndex = nearestWpIndex(WP_LOBBY, h2.Position)
+                task.wait(1); continue
             end
 
-            local target = WP_LOBBY[aiWpIndex]
-            updateStatus(string.format("🤖 Farming WP%d/%d  Ev%d/%d",
+            updateStatus(string.format("🏃 Farm WP%d/%d ev%d/%d",
                 aiWpIndex, #WP_LOBBY, collected, CFG.maxEvidence), C.info)
-            walkTo(target, CFG.moveTimeout)
+            runTo(WP_LOBBY[aiWpIndex], CFG.moveTimeout)
             if not AI_ON then break end
 
-            -- Cek lagi setelah jalan — kalau keluar bounds, TP
             local postW = getHRP()
             if postW and not isInLobbyBounds(postW.Position) then
-                updateStatus("🚨 Keluar setelah jalan! TP...", C.red)
-                aiWpIndex = emergencySnapToPhase("LOBBY_FARM", postW.Position)
-                continue
+                smartRecovery(postW.Position); continue
             end
 
             collectNearby()
             if not AI_ON then break end
             aiWpIndex += 1
 
-        -- ════════════════════════════════════════════════════
+        -- ════════════════════════════════
         --  PHASE 3: LOBBY → LIFT FACILITY
-        -- ════════════════════════════════════════════════════
+        -- ════════════════════════════════
         elseif aiPhase == "LOBBY_TO_LIFT" then
 
             if getZone(h2.Position) == "ISLAND" then
-                aiPhase   = "ISLAND_DEPOSIT"
+                aiPhase = "ISLAND_DEPOSIT"
                 aiWpIndex = nearestWpIndex(WP_ISLAND_BACK, h2.Position)
-                liftAttempts = 0
-                updateStatus("✅ Di island → deposit WP" .. aiWpIndex, C.ok)
-                continue
+                liftAttempts = 0; continue
             end
-
             if not isInLobbyBounds(h2.Position) then
-                updateStatus("🚨 Keluar lobby (lift phase)! TP...", C.red)
-                aiWpIndex = emergencySnapToPhase("LOBBY_TO_LIFT", h2.Position)
-                continue
+                smartRecovery(h2.Position); continue
             end
-
             if liftAttempts >= 4 then
-                updateStatus("❌ Lift Facility gagal 4x → ulang farm", C.red)
-                aiPhase   = "LOBBY_FARM"
+                updateStatus("❌ Lift Facility 4x → farm lagi", C.red)
+                aiPhase = "LOBBY_FARM"
                 aiWpIndex = nearestWpIndex(WP_LOBBY, h2.Position)
-                liftAttempts = 0
-                task.wait(1); continue
+                liftAttempts = 0; task.wait(1); continue
             end
 
             if aiWpIndex <= #WP_LOBBY then
-                local target = WP_LOBBY[aiWpIndex]
-                updateStatus(string.format("🚶 Menuju lift WP%d/%d", aiWpIndex, #WP_LOBBY), C.info)
-                walkTo(target, CFG.moveTimeout)
+                updateStatus(string.format("🏃 →Lift WP%d/%d", aiWpIndex, #WP_LOBBY), C.info)
+                runTo(WP_LOBBY[aiWpIndex], CFG.moveTimeout)
                 if not AI_ON then break end
-                local postW2 = getHRP()
-                if postW2 and not isInLobbyBounds(postW2.Position) then
-                    aiWpIndex = emergencySnapToPhase("LOBBY_TO_LIFT", postW2.Position)
-                    continue
+                local pw = getHRP()
+                if pw and not isInLobbyBounds(pw.Position) then
+                    smartRecovery(pw.Position); continue
                 end
-                aiWpIndex += 1
-                continue
+                aiWpIndex += 1; continue
             end
 
-            updateStatus("🛗 Lift Facility... (" .. liftAttempts .. ")", C.info)
+            updateStatus("🛗 Facility lift... (" .. liftAttempts .. ")", C.info)
             local pr, pos = findPromptByText("Facility")
             if pr then
                 firePromptAt(pr, pos)
-                local waited = 0
-                while waited < CFG.liftWait do
-                    task.wait(0.3); waited += 0.3
+                local w = 0
+                while w < CFG.liftWait do
+                    task.wait(0.3); w += 0.3
                     if not AI_ON then break end
                     if getZone(getHRP() and getHRP().Position) == "ISLAND" then break end
                 end
                 if not AI_ON then break end
-
                 local nh = getHRP()
                 if nh and getZone(nh.Position) == "ISLAND" then
-                    aiPhase   = "ISLAND_DEPOSIT"
-                    aiWpIndex = 1
+                    aiPhase = "ISLAND_DEPOSIT"
+                    aiWpIndex = nearestWpIndex(WP_ISLAND_BACK, nh.Position)
                     liftAttempts = 0
-                    updateStatus("✅ Kembali ke island!", C.ok)
                 else
                     liftAttempts += 1
                     aiWpIndex = math.max(33, #WP_LOBBY - 2)
@@ -1315,51 +1277,44 @@ function runAI()
             end
             continue
 
-        -- ════════════════════════════════════════════════════
+        -- ════════════════════════════════
         --  PHASE 4: ISLAND → DEPOSIT
-        -- ════════════════════════════════════════════════════
+        -- ════════════════════════════════
         elseif aiPhase == "ISLAND_DEPOSIT" then
 
             if getZone(h2.Position) == "LOBBY" then
-                aiPhase   = "LOBBY_TO_LIFT"
-                aiWpIndex = nearestWpIndex(WP_LOBBY, h2.Position, 33, #WP_LOBBY)
-                updateStatus("⚠ Masih di lobby → cari lift", C.warn)
-                continue
+                smartRecovery(h2.Position, "DEPOSIT"); continue
             end
 
             local pr, pos = findPromptByText("Deposit Evidence")
             if pr then
                 local h3 = getHRP()
-                if h3 and (h3.Position - pos).Magnitude > 60 then
-                    -- Langsung teleport ke deposit point
-                    emergencyTeleport(pos, "TP ke deposit")
-                    if not AI_ON then break end
+                if h3 and (h3.Position - pos).Magnitude > 50 then
+                    emergencyTP(pos, "TP deposit")
                 end
                 updateStatus("💼 Deposit " .. collected .. " evidence...", C.ok)
                 firePromptAt(pr, pos)
                 task.wait(CFG.depositWait)
                 if not AI_ON then break end
-
                 collected = 0; updateCount(0)
-                aiPhase   = "ISLAND_TO_LIFT"
-                local hrpNow = getHRP()
+                aiPhase = "ISLAND_TO_LIFT"
+                local hrpN = getHRP()
                 aiWpIndex = nearestWpIndex(WP_ISLAND_TO_LIFT,
-                    hrpNow and hrpNow.Position or WP_ISLAND_TO_LIFT[1])
+                    hrpN and hrpN.Position or WP_ISLAND_TO_LIFT[1])
                 liftAttempts = 0
-                updateStatus("🔄 Siklus selesai! → WP" .. aiWpIndex, C.ok)
-                task.wait(1)
-                continue
+                updateStatus("✅ Deposit! → siklus baru", C.ok)
+                task.wait(1); continue
             end
 
             if aiWpIndex > #WP_ISLAND_BACK then
-                updateStatus("⚠ Deposit tidak ketemu!", C.red)
-                aiWpIndex = math.max(1, #WP_ISLAND_BACK - 5)
+                updateStatus("⚠ Deposit tidak ketemu → balik", C.red)
+                aiWpIndex = math.max(1, #WP_ISLAND_BACK - 4)
                 task.wait(1.5); continue
             end
 
-            local target = WP_ISLAND_BACK[aiWpIndex]
-            updateStatus(string.format("🚶 Island→Deposit %d/%d", aiWpIndex, #WP_ISLAND_BACK), C.info)
-            walkTo(target, CFG.moveTimeout)
+            updateStatus(string.format("🏃 →Deposit %d/%d ev%d",
+                aiWpIndex, #WP_ISLAND_BACK, collected), C.info)
+            runTo(WP_ISLAND_BACK[aiWpIndex], CFG.moveTimeout)
             if not AI_ON then break end
             aiWpIndex += 1
         end
@@ -1374,5 +1329,5 @@ end
 -- ================================================================
 --  INIT
 -- ================================================================
-updateStatus("✅ Ready v9.2 — emergency TP edition", C.ok)
+updateStatus("✅ Ready v10 — Smart AI Edition", C.ok)
 updateMiniAiBtn()
