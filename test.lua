@@ -12,7 +12,7 @@ local LP                = Players.LocalPlayer
 -- ================================================================
 local Remotes = ReplicatedStorage:WaitForChild("Remotes", 10)
 
-local PrompDetective  = Remotes and Remotes:FindFirstChild("PrompDetective")   -- RemoteFunction
+local PrompDetective  = Remotes and Remotes:FindFirstChild("PromptDetective")   -- RemoteFunction
 local onDetectiveDied = Remotes and Remotes:FindFirstChild("onDetectiveDied")  -- RemoteEvent
 
 -- ================================================================
