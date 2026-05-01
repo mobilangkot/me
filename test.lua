@@ -8,7 +8,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local LP                = Players.LocalPlayer
 
 local Remotes         = ReplicatedStorage:WaitForChild("Remotes", 10)
-local PrompDetective  = Remotes and Remotes:FindFirstChild("PrompDetective")
+local PrompDetective  = Remotes and Remotes:FindFirstChild("PromptDetective")
 local onDetectiveDied = Remotes and Remotes:FindFirstChild("onDetectiveDied")
 
 -- ================================================================
