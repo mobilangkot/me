@@ -1,381 +1,282 @@
--- ================================================================
---  DEBUG SCRIPT: PrompDetective & onDetectiveDied
---  Tujuan: inspect, listen, dan test invoke/fire remote
--- ================================================================
+-- Remote Scanner: Detective & Evidence
+-- Tampilkan semua remote yang mengandung kata "detective" atau "evidence"
 
-local Players           = game:GetService("Players")
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local LP                = Players.LocalPlayer
-
--- ================================================================
---  AMBIL REMOTE
--- ================================================================
-local Remotes = ReplicatedStorage:WaitForChild("Remotes", 10)
-
-local PrompDetective  = Remotes and Remotes:FindFirstChild("PromptDetective")   -- RemoteFunction
-local onDetectiveDied = Remotes and Remotes:FindFirstChild("onDetectiveDied")  -- RemoteEvent
+local Players = game:GetService("Players")
+local LP = Players.LocalPlayer
 
 -- ================================================================
 --  GUI
 -- ================================================================
 local gui = Instance.new("ScreenGui", LP:WaitForChild("PlayerGui"))
-gui.Name = "DebugRemote"; gui.ResetOnSpawn = false
+gui.Name = "RemoteScanner"
+gui.ResetOnSpawn = false
 
 local frame = Instance.new("Frame", gui)
-frame.Size = UDim2.new(0, 460, 0, 540)
-frame.Position = UDim2.new(0.5, -230, 0.5, -270)
-frame.BackgroundColor3 = Color3.fromRGB(8, 8, 12)
+frame.Size = UDim2.new(0, 420, 0, 500)
+frame.Position = UDim2.new(0.5, -210, 0.5, -250)
+frame.BackgroundColor3 = Color3.fromRGB(10, 10, 14)
 frame.BorderSizePixel = 0
-frame.Active = true; frame.Draggable = true
+frame.Active = true
+frame.Draggable = true
 Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 10)
-Instance.new("UIStroke", frame).Color = Color3.fromRGB(35, 35, 50)
+local stroke = Instance.new("UIStroke", frame)
+stroke.Color = Color3.fromRGB(40, 40, 55)
+stroke.Thickness = 1
 
--- Title
-local titleBar = Instance.new("Frame", frame)
-titleBar.Size = UDim2.new(1, 0, 0, 36)
-titleBar.BackgroundColor3 = Color3.fromRGB(16, 16, 24)
-titleBar.BorderSizePixel = 0
-Instance.new("UICorner", titleBar).CornerRadius = UDim.new(0, 10)
-local tpatch = Instance.new("Frame", titleBar)
-tpatch.Size = UDim2.new(1,0,0.5,0); tpatch.Position = UDim2.new(0,0,0.5,0)
-tpatch.BackgroundColor3 = Color3.fromRGB(16,16,24); tpatch.BorderSizePixel = 0
+-- Header
+local header = Instance.new("Frame", frame)
+header.Size = UDim2.new(1, 0, 0, 38)
+header.BackgroundColor3 = Color3.fromRGB(18, 18, 26)
+header.BorderSizePixel = 0
+Instance.new("UICorner", header).CornerRadius = UDim.new(0, 10)
+-- patch bawah header biar tidak ada gap
+local patch = Instance.new("Frame", header)
+patch.Size = UDim2.new(1,0,0.5,0); patch.Position = UDim2.new(0,0,0.5,0)
+patch.BackgroundColor3 = Color3.fromRGB(18,18,26); patch.BorderSizePixel = 0
 
-local titleLbl = Instance.new("TextLabel", titleBar)
-titleLbl.Size = UDim2.new(1,-40,1,0); titleLbl.Position = UDim2.new(0,10,0,0)
-titleLbl.BackgroundTransparency = 1
-titleLbl.Text = "🛠  Remote Debugger — PrompDetective & onDetectiveDied"
-titleLbl.TextColor3 = Color3.fromRGB(200,200,200)
-titleLbl.Font = Enum.Font.GothamBold; titleLbl.TextSize = 10
-titleLbl.TextXAlignment = Enum.TextXAlignment.Left
+local title = Instance.new("TextLabel", header)
+title.Size = UDim2.new(1, -50, 1, 0)
+title.Position = UDim2.new(0, 12, 0, 0)
+title.BackgroundTransparency = 1
+title.Text = "🔍  Remote Scanner — detective / evidence"
+title.TextColor3 = Color3.fromRGB(210, 210, 210)
+title.Font = Enum.Font.GothamBold
+title.TextSize = 11
+title.TextXAlignment = Enum.TextXAlignment.Left
 
-local closeBtn = Instance.new("TextButton", titleBar)
-closeBtn.Size = UDim2.new(0,22,0,22); closeBtn.Position = UDim2.new(1,-28,0.5,-11)
-closeBtn.BackgroundColor3 = Color3.fromRGB(40,12,12)
-closeBtn.TextColor3 = Color3.fromRGB(200,60,60)
-closeBtn.Font = Enum.Font.GothamBold; closeBtn.TextSize = 12; closeBtn.Text = "✕"
-closeBtn.BorderSizePixel = 0; closeBtn.AutoButtonColor = false
-Instance.new("UICorner", closeBtn).CornerRadius = UDim.new(0,5)
+-- Close button
+local closeBtn = Instance.new("TextButton", header)
+closeBtn.Size = UDim2.new(0, 24, 0, 24)
+closeBtn.Position = UDim2.new(1, -30, 0.5, -12)
+closeBtn.BackgroundColor3 = Color3.fromRGB(40, 15, 15)
+closeBtn.TextColor3 = Color3.fromRGB(200, 60, 60)
+closeBtn.Font = Enum.Font.GothamBold
+closeBtn.TextSize = 12
+closeBtn.Text = "✕"
+closeBtn.BorderSizePixel = 0
+closeBtn.AutoButtonColor = false
+Instance.new("UICorner", closeBtn).CornerRadius = UDim.new(0, 6)
 closeBtn.MouseButton1Click:Connect(function() gui:Destroy() end)
 
--- Status row (apakah remote ditemukan)
-local statusLbl = Instance.new("TextLabel", frame)
-statusLbl.Size = UDim2.new(1,-16,0,28); statusLbl.Position = UDim2.new(0,8,0,40)
-statusLbl.BackgroundColor3 = Color3.fromRGB(14,14,20)
-statusLbl.BorderSizePixel = 0
-statusLbl.Font = Enum.Font.Code; statusLbl.TextSize = 10
-statusLbl.TextColor3 = Color3.fromRGB(150,150,170)
-statusLbl.TextXAlignment = Enum.TextXAlignment.Left
-statusLbl.Text = "  Mengecek remote..."
-Instance.new("UICorner", statusLbl).CornerRadius = UDim.new(0,6)
+-- Counter label
+local counterLbl = Instance.new("TextLabel", frame)
+counterLbl.Size = UDim2.new(1, -16, 0, 18)
+counterLbl.Position = UDim2.new(0, 8, 0, 42)
+counterLbl.BackgroundTransparency = 1
+counterLbl.Text = "Ditemukan: 0 remote"
+counterLbl.TextColor3 = Color3.fromRGB(100, 200, 140)
+counterLbl.Font = Enum.Font.GothamBold
+counterLbl.TextSize = 10
+counterLbl.TextXAlignment = Enum.TextXAlignment.Left
 
--- Tombol-tombol aksi
-local function mkBtn(label, yPos, color, textColor)
-    local b = Instance.new("TextButton", frame)
-    b.Size = UDim2.new(0.5,-12,0,30); b.Position = UDim2.new(0,8,0,yPos)
-    b.BackgroundColor3 = color or Color3.fromRGB(20,20,32)
-    b.TextColor3 = textColor or Color3.fromRGB(180,180,200)
-    b.Font = Enum.Font.GothamBold; b.TextSize = 10; b.Text = label
-    b.BorderSizePixel = 0; b.AutoButtonColor = false
-    Instance.new("UICorner", b).CornerRadius = UDim.new(0,7)
-    Instance.new("UIStroke", b).Color = Color3.fromRGB(35,35,55)
-    return b
-end
+-- Scan button
+local scanBtn = Instance.new("TextButton", frame)
+scanBtn.Size = UDim2.new(1, -16, 0, 28)
+scanBtn.Position = UDim2.new(0, 8, 0, 464)
+scanBtn.BackgroundColor3 = Color3.fromRGB(25, 25, 38)
+scanBtn.TextColor3 = Color3.fromRGB(120, 160, 220)
+scanBtn.Font = Enum.Font.GothamBold
+scanBtn.TextSize = 11
+scanBtn.Text = "🔄  Scan Ulang"
+scanBtn.BorderSizePixel = 0
+scanBtn.AutoButtonColor = false
+Instance.new("UICorner", scanBtn).CornerRadius = UDim.new(0, 8)
+local scanStroke = Instance.new("UIStroke", scanBtn)
+scanStroke.Color = Color3.fromRGB(40, 40, 60)
+scanStroke.Thickness = 1
 
-local function mkBtn2(label, yPos, color, textColor)
-    local b = Instance.new("TextButton", frame)
-    b.Size = UDim2.new(0.5,-12,0,30); b.Position = UDim2.new(0.5,4,0,yPos)
-    b.BackgroundColor3 = color or Color3.fromRGB(20,20,32)
-    b.TextColor3 = textColor or Color3.fromRGB(180,180,200)
-    b.Font = Enum.Font.GothamBold; b.TextSize = 10; b.Text = label
-    b.BorderSizePixel = 0; b.AutoButtonColor = false
-    Instance.new("UICorner", b).CornerRadius = UDim.new(0,7)
-    Instance.new("UIStroke", b).Color = Color3.fromRGB(35,35,55)
-    return b
-end
+-- Log scroll area
+local scrollFrame = Instance.new("ScrollingFrame", frame)
+scrollFrame.Size = UDim2.new(1, -16, 0, 400)
+scrollFrame.Position = UDim2.new(0, 8, 0, 62)
+scrollFrame.BackgroundColor3 = Color3.fromRGB(14, 14, 20)
+scrollFrame.BorderSizePixel = 0
+scrollFrame.ScrollBarThickness = 4
+scrollFrame.ScrollBarImageColor3 = Color3.fromRGB(50, 50, 70)
+scrollFrame.CanvasSize = UDim2.new(0, 0, 0, 0)
+Instance.new("UICorner", scrollFrame).CornerRadius = UDim.new(0, 6)
 
--- Row 1: PrompDetective (RemoteFunction)
-local invokeBtn     = mkBtn( "📞 InvokeServer (kosong)",   74, Color3.fromRGB(20,30,50), Color3.fromRGB(100,160,255))
-local invokeArgBtn  = mkBtn2("📞 InvokeServer (arg test)", 74, Color3.fromRGB(20,30,50), Color3.fromRGB(100,160,255))
+local listLayout = Instance.new("UIListLayout", scrollFrame)
+listLayout.Padding = UDim.new(0, 2)
+listLayout.SortOrder = Enum.SortOrder.LayoutOrder
 
--- Row 2: onDetectiveDied (RemoteEvent)
-local listenBtn     = mkBtn( "👂 Listen onDetectiveDied",  110, Color3.fromRGB(20,40,25), Color3.fromRGB(80,200,120))
-local fireBtn       = mkBtn2("🔥 FireServer (test)",       110, Color3.fromRGB(40,20,20), Color3.fromRGB(220,100,80))
-
--- Row 3: util
-local clearBtn      = mkBtn( "🗑  Clear Log",              146, Color3.fromRGB(18,18,24), Color3.fromRGB(100,100,120))
-local inspectBtn    = mkBtn2("🔍 Inspect Properties",      146, Color3.fromRGB(18,18,24), Color3.fromRGB(150,130,200))
-
--- Log area
-local scroll = Instance.new("ScrollingFrame", frame)
-scroll.Size = UDim2.new(1,-16,0,340); scroll.Position = UDim2.new(0,8,0,184)
-scroll.BackgroundColor3 = Color3.fromRGB(11,11,16)
-scroll.BorderSizePixel = 0
-scroll.ScrollBarThickness = 4
-scroll.ScrollBarImageColor3 = Color3.fromRGB(50,50,70)
-scroll.CanvasSize = UDim2.new(0,0,0,0)
-Instance.new("UICorner", scroll).CornerRadius = UDim.new(0,6)
-
-local layout = Instance.new("UIListLayout", scroll)
-layout.Padding = UDim.new(0,1)
-layout.SortOrder = Enum.SortOrder.LayoutOrder
-
-local uipad = Instance.new("UIPadding", scroll)
-uipad.PaddingLeft = UDim.new(0,6); uipad.PaddingTop = UDim.new(0,4)
-uipad.PaddingRight = UDim.new(0,6)
+local padding = Instance.new("UIPadding", scrollFrame)
+padding.PaddingLeft = UDim.new(0, 6)
+padding.PaddingTop = UDim.new(0, 4)
+padding.PaddingRight = UDim.new(0, 6)
 
 -- ================================================================
---  LOG SYSTEM
+--  LOG HELPERS
 -- ================================================================
-local logIdx = 0
+local logCount = 0
 
-local function log(text, color)
-    logIdx += 1
-    local lbl = Instance.new("TextLabel", scroll)
-    lbl.LayoutOrder = logIdx
-    lbl.Size = UDim2.new(1,-4,0,0)
+local function clearLog()
+    for _, c in ipairs(scrollFrame:GetChildren()) do
+        if c:IsA("TextLabel") then c:Destroy() end
+    end
+    logCount = 0
+    scrollFrame.CanvasSize = UDim2.new(0, 0, 0, 0)
+end
+
+-- type: "found_remote" | "found_other" | "header" | "info" | "none"
+local typeColors = {
+    found_remote = Color3.fromRGB(100, 220, 140),  -- hijau  = RemoteEvent/Function
+    found_other  = Color3.fromRGB(180, 150, 255),  -- ungu   = Instance lain
+    header       = Color3.fromRGB(120, 160, 220),  -- biru   = section header
+    info         = Color3.fromRGB(90, 90, 110),    -- abu    = info
+    none         = Color3.fromRGB(200, 80, 80),    -- merah  = tidak ada
+}
+
+local function addLog(text, logType)
+    logCount += 1
+    local lbl = Instance.new("TextLabel", scrollFrame)
+    lbl.Size = UDim2.new(1, -4, 0, 0)
     lbl.AutomaticSize = Enum.AutomaticSize.Y
     lbl.BackgroundTransparency = 1
-    lbl.Text = os.date("[%H:%M:%S] ") .. tostring(text)
-    lbl.TextColor3 = color or Color3.fromRGB(160,160,180)
+    lbl.Text = text
+    lbl.TextColor3 = typeColors[logType] or typeColors.info
     lbl.Font = Enum.Font.Code
     lbl.TextSize = 10
     lbl.TextXAlignment = Enum.TextXAlignment.Left
     lbl.TextWrapped = true
+    lbl.RichText = false
+    lbl.LayoutOrder = logCount
 
+    -- Update canvas height
     task.defer(function()
-        local h = layout.AbsoluteContentSize.Y + 10
-        scroll.CanvasSize = UDim2.new(0,0,0,h)
-        scroll.CanvasPosition = Vector2.new(0,h)
+        local h = listLayout.AbsoluteContentSize.Y + 10
+        scrollFrame.CanvasSize = UDim2.new(0, 0, 0, h)
+        scrollFrame.CanvasPosition = Vector2.new(0, h)
     end)
 end
 
-local function logSep()
-    log(string.rep("─", 55), Color3.fromRGB(35,35,50))
+-- ================================================================
+--  SCANNER
+-- ================================================================
+local KEYWORDS = { "detective", "evidence" }
+
+local function containsKeyword(name)
+    local lower = string.lower(name)
+    for _, kw in ipairs(KEYWORDS) do
+        if string.find(lower, kw) then return true, kw end
+    end
+    return false, nil
 end
 
-local function logOk(t)   log("✅ " .. t, Color3.fromRGB(80,210,130))  end
-local function logErr(t)  log("❌ " .. t, Color3.fromRGB(220,80,80))   end
-local function logInfo(t) log("ℹ  " .. t, Color3.fromRGB(100,150,220)) end
-local function logWarn(t) log("⚠  " .. t, Color3.fromRGB(220,170,60)) end
-local function logData(t) log("→  " .. t, Color3.fromRGB(180,140,255)) end
-
--- ================================================================
---  CEK REMOTE SAAT INIT
--- ================================================================
-local function serializeValue(v)
-    local t = typeof(v)
-    if t == "nil"     then return "nil" end
-    if t == "boolean" then return tostring(v) end
-    if t == "number"  then return tostring(v) end
-    if t == "string"  then return '"' .. v .. '"' end
-    if t == "table"   then
-        local parts = {}
-        for k, val in pairs(v) do
-            table.insert(parts, tostring(k) .. "=" .. serializeValue(val))
-        end
-        return "{" .. table.concat(parts, ", ") .. "}"
-    end
-    if t == "Instance" then return "[" .. v.ClassName .. "] " .. v.Name end
-    return "(" .. t .. ") " .. tostring(v)
+local function getClassName(obj)
+    local ok, cn = pcall(function() return obj.ClassName end)
+    return ok and cn or "Unknown"
 end
 
-local function checkRemotes()
-    logSep()
-    logInfo("Cek remote di ReplicatedStorage.Remotes...")
-
-    if not Remotes then
-        logErr("ReplicatedStorage.Remotes TIDAK DITEMUKAN")
-        statusLbl.Text = "  ❌ Remotes folder tidak ada"
-        statusLbl.TextColor3 = Color3.fromRGB(220,80,80)
-        return
+local function getFullPath(obj)
+    local parts = {}
+    local cur = obj
+    while cur and cur ~= game do
+        table.insert(parts, 1, cur.Name)
+        local ok, parent = pcall(function() return cur.Parent end)
+        if not ok or parent == nil then break end
+        cur = parent
     end
-    logOk("Remotes folder ditemukan")
-
-    -- PrompDetective
-    if PrompDetective then
-        logOk("PrompDetective → " .. PrompDetective.ClassName)
-        logData("Path: " .. PrompDetective:GetFullName())
-    else
-        logErr("PrompDetective TIDAK DITEMUKAN di Remotes")
-    end
-
-    -- onDetectiveDied
-    if onDetectiveDied then
-        logOk("onDetectiveDied → " .. onDetectiveDied.ClassName)
-        logData("Path: " .. onDetectiveDied:GetFullName())
-    else
-        logErr("onDetectiveDied TIDAK DITEMUKAN di Remotes")
-    end
-
-    -- Update status bar
-    local s1 = PrompDetective  and "📞 PrompDetective ✓" or "📞 PrompDetective ✗"
-    local s2 = onDetectiveDied and "  |  📡 onDetectiveDied ✓" or "  |  📡 onDetectiveDied ✗"
-    statusLbl.Text = "  " .. s1 .. s2
-    statusLbl.TextColor3 = Color3.fromRGB(140,200,160)
-    logSep()
+    return table.concat(parts, " › ")
 end
 
--- ================================================================
---  LISTEN onDetectiveDied (auto dari awal)
--- ================================================================
-local listening = false
-local listenerConn = nil
+local function scan()
+    clearLog()
+    local found = 0
+    local scanned = 0
 
-local function startListen()
-    if not onDetectiveDied then
-        logErr("onDetectiveDied tidak ada, tidak bisa listen")
-        return
-    end
-    if listening then
-        logWarn("Sudah listening — koneksi sebelumnya tetap aktif")
-        return
-    end
+    addLog("▸ Mulai scan seluruh game...", "header")
+    addLog("  Keywords: detective, evidence", "info")
+    addLog(string.rep("─", 52), "info")
 
-    listening = true
-    listenBtn.Text = "👂 Listening... (ON)"
-    listenBtn.TextColor3 = Color3.fromRGB(60,220,100)
+    -- Tempat-tempat yang dicari
+    local roots = {
+        game:GetService("ReplicatedStorage"),
+        game:GetService("ReplicatedFirst"),
+        workspace,
+        game:GetService("ServerScriptService"), -- mungkin tidak accessible, pcall aman
+        game:GetService("Players"),
+        game:GetService("Lighting"),
+        game:GetService("StarterGui"),
+        game:GetService("StarterPack"),
+        game:GetService("StarterPlayer"),
+        game:GetService("SoundService"),
+        game:GetService("Chat"),
+        game:GetService("LocalizationService"),
+        game:GetService("TestService"),
+    }
 
-    listenerConn = onDetectiveDied.OnClientEvent:Connect(function(...)
-        local args = {...}
-        logSep()
-        logOk("onDetectiveDied FIRED dari server!")
-        if #args == 0 then
-            logInfo("Tidak ada argumen")
-        else
-            for i, v in ipairs(args) do
-                logData("Arg[" .. i .. "] = " .. serializeValue(v))
+    for _, root in ipairs(roots) do
+        local ok, descendants = pcall(function() return root:GetDescendants() end)
+        if not ok then continue end
+
+        local sectionPrinted = false
+
+        for _, obj in ipairs(descendants) do
+            scanned += 1
+            local nameOk, objName = pcall(function() return obj.Name end)
+            if not nameOk then continue end
+
+            local has, matchedKw = containsKeyword(objName)
+            if not has then continue end
+
+            -- Print section header sekali per root
+            if not sectionPrinted then
+                addLog("", "info")
+                addLog("📁 " .. root.Name, "header")
+                sectionPrinted = true
             end
+
+            found += 1
+            local cn = getClassName(obj)
+            local path = getFullPath(obj)
+
+            -- Tentukan icon dan type
+            local icon = "◦"
+            local logType = "found_other"
+            if cn == "RemoteEvent" then
+                icon = "📡"; logType = "found_remote"
+            elseif cn == "RemoteFunction" then
+                icon = "📞"; logType = "found_remote"
+            elseif cn == "BindableEvent" then
+                icon = "🔔"; logType = "found_other"
+            elseif cn == "BindableFunction" then
+                icon = "🔁"; logType = "found_other"
+            elseif cn == "Folder" or cn == "Model" then
+                icon = "📂"; logType = "found_other"
+            elseif cn == "Script" or cn == "LocalScript" or cn == "ModuleScript" then
+                icon = "📜"; logType = "found_other"
+            end
+
+            addLog(string.format("  %s [%s] %s", icon, cn, objName), logType)
+            addLog(string.format("     Path: %s", path), "info")
         end
-        logSep()
-    end)
-    logOk("Listener onDetectiveDied aktif — menunggu event dari server...")
+    end
+
+    addLog("", "info")
+    addLog(string.rep("─", 52), "info")
+
+    if found == 0 then
+        addLog("⚠ Tidak ada yang ditemukan.", "none")
+    else
+        addLog(string.format("✅ Total ditemukan: %d item (scan %d obj)", found, scanned), "header")
+    end
+
+    counterLbl.Text = string.format("Ditemukan: %d remote/instance", found)
 end
 
 -- ================================================================
---  TOMBOL ACTIONS
+--  BIND
 -- ================================================================
-
--- InvokeServer tanpa argumen
-invokeBtn.MouseButton1Click:Connect(function()
-    if not PrompDetective then logErr("PrompDetective tidak ada"); return end
-    logSep()
-    logInfo("InvokeServer() — tanpa argumen...")
-    local ok, result = pcall(function()
-        return PrompDetective:InvokeServer()
-    end)
-    if ok then
-        logOk("InvokeServer berhasil!")
-        logData("Return: " .. serializeValue(result))
-    else
-        logErr("InvokeServer gagal: " .. tostring(result))
-    end
-    logSep()
+scanBtn.MouseButton1Click:Connect(function()
+    scanBtn.Text = "⏳ Scanning..."
+    task.wait(0.05)
+    scan()
+    scanBtn.Text = "🔄  Scan Ulang"
 end)
 
--- InvokeServer dengan beberapa argumen test
-invokeArgBtn.MouseButton1Click:Connect(function()
-    if not PrompDetective then logErr("PrompDetective tidak ada"); return end
-    logSep()
-    logInfo("InvokeServer(LP, 'test', 1, true) — dengan argumen test...")
-    local ok, result = pcall(function()
-        return PrompDetective:InvokeServer(LP, "test", 1, true)
-    end)
-    if ok then
-        logOk("InvokeServer berhasil!")
-        logData("Return: " .. serializeValue(result))
-    else
-        logErr("InvokeServer gagal: " .. tostring(result))
-    end
-    logSep()
-end)
-
--- Toggle listen
-listenBtn.MouseButton1Click:Connect(function()
-    if listening then
-        if listenerConn then listenerConn:Disconnect(); listenerConn = nil end
-        listening = false
-        listenBtn.Text = "👂 Listen onDetectiveDied"
-        listenBtn.TextColor3 = Color3.fromRGB(80,200,120)
-        logWarn("Listener dimatikan")
-    else
-        startListen()
-    end
-end)
-
--- FireServer onDetectiveDied (test — biasanya server yang fire ini ke client,
--- tapi kita coba FireServer kalau ada handler di server)
-fireBtn.MouseButton1Click:Connect(function()
-    if not onDetectiveDied then logErr("onDetectiveDied tidak ada"); return end
-    logSep()
-    logInfo("Mencoba FireServer pada onDetectiveDied...")
-    logWarn("Catatan: RemoteEvent ini biasanya di-fire oleh SERVER ke client,")
-    logWarn("bukan sebaliknya. FireServer mungkin tidak ada handler-nya.")
-    local ok, err = pcall(function()
-        onDetectiveDied:FireServer()
-    end)
-    if ok then
-        logOk("FireServer terkirim (tidak ada error client-side)")
-        logInfo("Cek output server untuk konfirmasi apakah ada handler")
-    else
-        logErr("FireServer error: " .. tostring(err))
-    end
-    logSep()
-end)
-
--- Inspect properties
-inspectBtn.MouseButton1Click:Connect(function()
-    logSep()
-    logInfo("=== INSPECT PROPERTIES ===")
-
-    local function inspectRemote(obj, name)
-        if not obj then logErr(name .. " → nil"); return end
-        logOk(name .. " [" .. obj.ClassName .. "]")
-        logData("  Name:     " .. obj.Name)
-        logData("  FullPath: " .. obj:GetFullName())
-
-        -- Cek apakah ada children
-        local children = obj:GetChildren()
-        if #children > 0 then
-            logInfo("  Children (" .. #children .. "):")
-            for _, c in ipairs(children) do
-                logData("    - [" .. c.ClassName .. "] " .. c.Name)
-            end
-        else
-            logInfo("  Children: (kosong)")
-        end
-    end
-
-    inspectRemote(PrompDetective, "PrompDetective")
-    inspectRemote(onDetectiveDied, "onDetectiveDied")
-
-    -- Scan semua isi Remotes folder untuk konteks
-    if Remotes then
-        logInfo("--- Semua isi Remotes ---")
-        for _, obj in ipairs(Remotes:GetChildren()) do
-            logData("  [" .. obj.ClassName .. "] " .. obj.Name)
-        end
-    end
-    logSep()
-end)
-
--- Clear log
-clearBtn.MouseButton1Click:Connect(function()
-    for _, c in ipairs(scroll:GetChildren()) do
-        if c:IsA("TextLabel") then c:Destroy() end
-    end
-    logIdx = 0
-    scroll.CanvasSize = UDim2.new(0,0,0,0)
-    logInfo("Log dibersihkan")
-end)
-
--- ================================================================
---  INIT
--- ================================================================
+-- Auto scan saat pertama kali
 task.spawn(function()
-    task.wait(0.3)
-    checkRemotes()
-    task.wait(0.2)
-    -- Auto mulai listen dari awal
-    startListen()
-    logInfo("Auto-listen aktif. Tekan tombol untuk test invoke/fire.")
+    task.wait(0.5)
+    scan()
 end)
