@@ -8,7 +8,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local LP                = Players.LocalPlayer
 
 -- ================================================================
---  AMBIL REMOTE
+--  AMBIL REMOTE 
 -- ================================================================
 local Remotes = ReplicatedStorage:WaitForChild("Remotes", 10)
 
