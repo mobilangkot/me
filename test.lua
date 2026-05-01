@@ -12,7 +12,7 @@ local PrompDetective  = Remotes and Remotes:FindFirstChild("PromptDetective")
 local onDetectiveDied = Remotes and Remotes:FindFirstChild("onDetectiveDied")
 
 -- ================================================================
---  GUI
+--  GUI 
 -- ================================================================
 local gui = Instance.new("ScreenGui", LP:WaitForChild("PlayerGui"))
 gui.Name = "DebugRemote2"; gui.ResetOnSpawn = false
