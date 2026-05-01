@@ -1,79 +1,122 @@
 -- ================================================================
---  Inspector: DetectivePick & DetectiveSystem
---  Cara: require ModuleScript → dump semua key/function yang di-return
---  Note: .Source tidak accessible di runtime (Roblox blokir)
+--  DEBUG SCRIPT v2: PrompDetective & onDetectiveDied
+--  Fix: InvokeServer pakai timeout agar tidak hang selamanya
 -- ================================================================
 
-local Players     = game:GetService("Players")
-local LP          = Players.LocalPlayer
+local Players           = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local LP                = Players.LocalPlayer
+
+local Remotes         = ReplicatedStorage:WaitForChild("Remotes", 10)
+
+
+--sdf
+local PrompDetective  = Remotes and Remotes:FindFirstChild("PromptDetective")
+local onDetectiveDied = Remotes and Remotes:FindFirstChild("onDetectiveDied")
 
 -- ================================================================
---  GUI
+--  GUI 
 -- ================================================================
 local gui = Instance.new("ScreenGui", LP:WaitForChild("PlayerGui"))
-gui.Name = "ScriptInspector"; gui.ResetOnSpawn = false
+gui.Name = "DebugRemote2"; gui.ResetOnSpawn = false
 
 local frame = Instance.new("Frame", gui)
-frame.Size = UDim2.new(0,500,0,560)
-frame.Position = UDim2.new(0.5,-250,0.5,-280)
+frame.Size = UDim2.new(0, 460, 0, 560)
+frame.Position = UDim2.new(0.5,-230,0.5,-280)
 frame.BackgroundColor3 = Color3.fromRGB(8,8,12)
 frame.BorderSizePixel = 0; frame.Active = true; frame.Draggable = true
-Instance.new("UICorner",frame).CornerRadius = UDim.new(0,10)
-Instance.new("UIStroke",frame).Color = Color3.fromRGB(35,35,50)
+Instance.new("UICorner", frame).CornerRadius = UDim.new(0,10)
+Instance.new("UIStroke", frame).Color = Color3.fromRGB(35,35,50)
 
-local titleBar = Instance.new("Frame",frame)
-titleBar.Size = UDim2.new(1,0,0,36); titleBar.BackgroundColor3 = Color3.fromRGB(16,16,24)
+local titleBar = Instance.new("Frame", frame)
+titleBar.Size = UDim2.new(1,0,0,36)
+titleBar.BackgroundColor3 = Color3.fromRGB(16,16,24)
 titleBar.BorderSizePixel = 0
 Instance.new("UICorner",titleBar).CornerRadius = UDim.new(0,10)
 local tp = Instance.new("Frame",titleBar)
 tp.Size=UDim2.new(1,0,0.5,0);tp.Position=UDim2.new(0,0,0.5,0)
 tp.BackgroundColor3=Color3.fromRGB(16,16,24);tp.BorderSizePixel=0
 
-local titleLbl = Instance.new("TextLabel",titleBar)
+local titleLbl = Instance.new("TextLabel", titleBar)
 titleLbl.Size=UDim2.new(1,-40,1,0);titleLbl.Position=UDim2.new(0,10,0,0)
-titleLbl.BackgroundTransparency=1;titleLbl.Text="🔬  Script Inspector — DetectivePick & DetectiveSystem"
-titleLbl.TextColor3=Color3.fromRGB(200,200,200);titleLbl.Font=Enum.Font.GothamBold
-titleLbl.TextSize=10;titleLbl.TextXAlignment=Enum.TextXAlignment.Left
+titleLbl.BackgroundTransparency=1
+titleLbl.Text="🛠  Remote Debugger v2 — timeout-safe invoke"
+titleLbl.TextColor3=Color3.fromRGB(200,200,200)
+titleLbl.Font=Enum.Font.GothamBold;titleLbl.TextSize=10
+titleLbl.TextXAlignment=Enum.TextXAlignment.Left
 
 local closeBtn = Instance.new("TextButton",titleBar)
 closeBtn.Size=UDim2.new(0,22,0,22);closeBtn.Position=UDim2.new(1,-28,0.5,-11)
-closeBtn.BackgroundColor3=Color3.fromRGB(40,12,12);closeBtn.TextColor3=Color3.fromRGB(200,60,60)
+closeBtn.BackgroundColor3=Color3.fromRGB(40,12,12)
+closeBtn.TextColor3=Color3.fromRGB(200,60,60)
 closeBtn.Font=Enum.Font.GothamBold;closeBtn.TextSize=12;closeBtn.Text="✕"
 closeBtn.BorderSizePixel=0;closeBtn.AutoButtonColor=false
 Instance.new("UICorner",closeBtn).CornerRadius=UDim.new(0,5)
 closeBtn.MouseButton1Click:Connect(function() gui:Destroy() end)
 
--- Tombol
-local function mkBtn(label, x, yPos, w, color, tc)
-    local b = Instance.new("TextButton",frame)
-    b.Size=UDim2.new(0,w,0,26);b.Position=UDim2.new(0,x,0,yPos)
-    b.BackgroundColor3=color or Color3.fromRGB(18,18,28)
-    b.TextColor3=tc or Color3.fromRGB(170,170,200)
-    b.Font=Enum.Font.GothamBold;b.TextSize=10;b.Text=label
-    b.BorderSizePixel=0;b.AutoButtonColor=false
-    Instance.new("UICorner",b).CornerRadius=UDim.new(0,6)
+-- Status
+local statusLbl = Instance.new("TextLabel",frame)
+statusLbl.Size=UDim2.new(1,-16,0,22);statusLbl.Position=UDim2.new(0,8,0,40)
+statusLbl.BackgroundColor3=Color3.fromRGB(14,14,20);statusLbl.BorderSizePixel=0
+statusLbl.Font=Enum.Font.Code;statusLbl.TextSize=10
+statusLbl.TextColor3=Color3.fromRGB(140,140,160)
+statusLbl.TextXAlignment=Enum.TextXAlignment.Left
+statusLbl.Text="  Mengecek..."
+Instance.new("UICorner",statusLbl).CornerRadius=UDim.new(0,5)
+
+-- ================================================================
+--  TOMBOL HELPER
+-- ================================================================
+local function mkBtn(label, x, y, w, color, tc)
+    local b = Instance.new("TextButton", frame)
+    b.Size = UDim2.new(0, w, 0, 28)
+    b.Position = UDim2.new(0, x, 0, y)
+    b.BackgroundColor3 = color or Color3.fromRGB(20,20,32)
+    b.TextColor3 = tc or Color3.fromRGB(180,180,200)
+    b.Font = Enum.Font.GothamBold; b.TextSize = 10; b.Text = label
+    b.BorderSizePixel = 0; b.AutoButtonColor = false
+    Instance.new("UICorner",b).CornerRadius=UDim.new(0,7)
     Instance.new("UIStroke",b).Color=Color3.fromRGB(35,35,55)
     return b
 end
 
-local BW = 155
-local btn_pick   = mkBtn("🔬 Dump DetectivePick",   8,  42, BW, Color3.fromRGB(15,25,45), Color3.fromRGB(100,160,255))
-local btn_sys    = mkBtn("🔬 Dump DetectiveSystem",  8+BW+4, 42, BW, Color3.fromRGB(15,35,20), Color3.fromRGB(80,210,120))
-local btn_find   = mkBtn("🗺  Find Semua Detective",  8+BW*2+8, 42, BW, Color3.fromRGB(30,20,45), Color3.fromRGB(180,130,255))
-local btn_clear  = mkBtn("🗑  Clear",                8+BW*3+12, 42, 60, Color3.fromRGB(18,18,22), Color3.fromRGB(100,100,120))
+local W = 214
+-- Row 1: PrompDetective
+local btn_inv0   = mkBtn("📞 Invoke (kosong)",      8,  68, W, Color3.fromRGB(15,25,50), Color3.fromRGB(100,160,255))
+local btn_invArg = mkBtn("📞 Invoke (arg LP)",      8+W+8, 68, W, Color3.fromRGB(15,25,50), Color3.fromRGB(100,160,255))
+-- Row 2
+local btn_invStr = mkBtn('📞 Invoke ("collect")',   8,  100, W, Color3.fromRGB(15,25,50), Color3.fromRGB(100,160,255))
+local btn_invNum = mkBtn("📞 Invoke (1, true)",     8+W+8,100, W, Color3.fromRGB(15,25,50), Color3.fromRGB(100,160,255))
+-- Row 3: onDetectiveDied
+local btn_listen = mkBtn("👂 Listen ON/OFF",        8,  132, W, Color3.fromRGB(15,35,20), Color3.fromRGB(80,210,120))
+local btn_fire   = mkBtn("🔥 FireServer (test)",    8+W+8,132, W, Color3.fromRGB(40,15,15), Color3.fromRGB(220,100,80))
+-- Row 4: util
+local btn_insp   = mkBtn("🔍 Inspect",              8,  164, W, Color3.fromRGB(20,20,28), Color3.fromRGB(160,130,210))
+local btn_clear  = mkBtn("🗑  Clear",               8+W+8,164, W, Color3.fromRGB(18,18,22), Color3.fromRGB(100,100,120))
 
--- Scroll log
-local scroll = Instance.new("ScrollingFrame",frame)
-scroll.Size=UDim2.new(1,-16,0,490);scroll.Position=UDim2.new(0,8,0,74)
+-- Timeout slider label
+local timeoutLbl = Instance.new("TextLabel", frame)
+timeoutLbl.Size=UDim2.new(1,-16,0,16);timeoutLbl.Position=UDim2.new(0,8,0,197)
+timeoutLbl.BackgroundTransparency=1
+timeoutLbl.Text="⏱  Invoke timeout: 5 detik  (ubah CFG.invokeTimeout di script)"
+timeoutLbl.TextColor3=Color3.fromRGB(70,70,90)
+timeoutLbl.Font=Enum.Font.Code;timeoutLbl.TextSize=9
+timeoutLbl.TextXAlignment=Enum.TextXAlignment.Left
+
+-- Log scroll
+local scroll = Instance.new("ScrollingFrame", frame)
+scroll.Size=UDim2.new(1,-16,0,330);scroll.Position=UDim2.new(0,8,0,216)
 scroll.BackgroundColor3=Color3.fromRGB(11,11,16);scroll.BorderSizePixel=0
-scroll.ScrollBarThickness=4;scroll.ScrollBarImageColor3=Color3.fromRGB(50,50,70)
+scroll.ScrollBarThickness=4
+scroll.ScrollBarImageColor3=Color3.fromRGB(50,50,70)
 scroll.CanvasSize=UDim2.new(0,0,0,0)
 Instance.new("UICorner",scroll).CornerRadius=UDim.new(0,6)
 
 local layout = Instance.new("UIListLayout",scroll)
 layout.Padding=UDim.new(0,1);layout.SortOrder=Enum.SortOrder.LayoutOrder
 local uipad = Instance.new("UIPadding",scroll)
-uipad.PaddingLeft=UDim.new(0,6);uipad.PaddingTop=UDim.new(0,4);uipad.PaddingRight=UDim.new(0,6)
+uipad.PaddingLeft=UDim.new(0,6);uipad.PaddingTop=UDim.new(0,4)
+uipad.PaddingRight=UDim.new(0,6)
 
 -- ================================================================
 --  LOG
@@ -81,327 +124,294 @@ uipad.PaddingLeft=UDim.new(0,6);uipad.PaddingTop=UDim.new(0,4);uipad.PaddingRigh
 local logIdx = 0
 local function log(text, color)
     logIdx += 1
-    local lbl = Instance.new("TextLabel",scroll)
-    lbl.LayoutOrder=logIdx;lbl.Size=UDim2.new(1,-4,0,0)
-    lbl.AutomaticSize=Enum.AutomaticSize.Y;lbl.BackgroundTransparency=1
-    lbl.Text=os.date("[%H:%M:%S] ")..tostring(text)
-    lbl.TextColor3=color or Color3.fromRGB(160,160,180)
-    lbl.Font=Enum.Font.Code;lbl.TextSize=10
-    lbl.TextXAlignment=Enum.TextXAlignment.Left;lbl.TextWrapped=true
+    local lbl = Instance.new("TextLabel", scroll)
+    lbl.LayoutOrder = logIdx
+    lbl.Size = UDim2.new(1,-4,0,0)
+    lbl.AutomaticSize = Enum.AutomaticSize.Y
+    lbl.BackgroundTransparency = 1
+    lbl.Text = os.date("[%H:%M:%S] ") .. tostring(text)
+    lbl.TextColor3 = color or Color3.fromRGB(160,160,180)
+    lbl.Font = Enum.Font.Code; lbl.TextSize = 10
+    lbl.TextXAlignment = Enum.TextXAlignment.Left
+    lbl.TextWrapped = true
     task.defer(function()
-        local h=layout.AbsoluteContentSize.Y+10
-        scroll.CanvasSize=UDim2.new(0,0,0,h)
-        scroll.CanvasPosition=Vector2.new(0,h)
+        local h = layout.AbsoluteContentSize.Y + 10
+        scroll.CanvasSize = UDim2.new(0,0,0,h)
+        scroll.CanvasPosition = Vector2.new(0,h)
     end)
 end
 
-local C = {
-    ok    = Color3.fromRGB(80,210,130),
-    err   = Color3.fromRGB(220,80,80),
-    info  = Color3.fromRGB(100,150,220),
-    warn  = Color3.fromRGB(220,170,60),
-    data  = Color3.fromRGB(180,140,255),
-    sep   = Color3.fromRGB(30,30,45),
-    fn    = Color3.fromRGB(255,180,80),    -- fungsi
-    tbl   = Color3.fromRGB(80,200,200),    -- table
-    str   = Color3.fromRGB(150,220,100),   -- string
-    num   = Color3.fromRGB(200,160,255),   -- number
-}
-
-local function logOk(t)   log("✅ "..t, C.ok)   end
-local function logErr(t)  log("❌ "..t, C.err)  end
-local function logInfo(t) log("ℹ  "..t, C.info) end
-local function logWarn(t) log("⚠  "..t, C.warn) end
-local function logSep()   log(string.rep("─",60), C.sep) end
+local function logOk(t)   log("✅ "..t, Color3.fromRGB(80,210,130))   end
+local function logErr(t)  log("❌ "..t, Color3.fromRGB(220,80,80))    end
+local function logInfo(t) log("ℹ  "..t, Color3.fromRGB(100,150,220))  end
+local function logWarn(t) log("⚠  "..t, Color3.fromRGB(220,170,60))   end
+local function logData(t) log("→  "..t, Color3.fromRGB(180,140,255))  end
+local function logSep()   log(string.rep("─",55), Color3.fromRGB(30,30,45)) end
 
 -- ================================================================
---  DUMP TABLE (hasil require)
---  Rekursif 1 level untuk tabel di dalam tabel
+--  SERIALIZE — tampilkan return value sejelas mungkin
 -- ================================================================
-local function dumpTable(tbl, prefix, depth)
+local function serialize(v, depth)
     depth = depth or 0
-    prefix = prefix or ""
-    if depth > 3 then log(prefix.."  ...(terlalu dalam)", C.sep); return end
+    if depth > 4 then return "..." end
+    local t = typeof(v)
+    if v == nil          then return "nil" end
+    if t == "boolean"    then return tostring(v) end
+    if t == "number"     then return tostring(v) end
+    if t == "string"     then return '"'..v..'"' end
+    if t == "Instance"   then
+        local ok,n = pcall(function() return v:GetFullName() end)
+        return "["..v.ClassName.."] "..(ok and n or v.Name)
+    end
+    if t == "table" then
+        if next(v) == nil then return "{}" end
+        local parts = {}
+        for k, val in pairs(v) do
+            local ks = (type(k)=="string") and k or "["..tostring(k).."]"
+            table.insert(parts, ks.." = "..serialize(val, depth+1))
+        end
+        return "{ "..table.concat(parts, ", ").." }"
+    end
+    if t == "Vector3"    then return string.format("Vector3(%.2f, %.2f, %.2f)", v.X,v.Y,v.Z) end
+    if t == "CFrame"     then return string.format("CFrame(%.1f,%.1f,%.1f)", v.X,v.Y,v.Z) end
+    if t == "EnumItem"   then return tostring(v) end
+    return "("..t..") "..tostring(v)
+end
 
-    if type(tbl) ~= "table" then
-        log(prefix.."(bukan table: "..type(tbl)..")", C.warn)
+local function logResult(returnVals)
+    if returnVals == nil then
+        logData("Return: nil")
         return
     end
+    if type(returnVals) == "table" then
+        if #returnVals == 0 and next(returnVals) == nil then
+            logData("Return: (table kosong / void)")
+        else
+            for i, v in ipairs(returnVals) do
+                logData("Return["..i.."]: "..serialize(v))
+            end
+            -- kalau ada key non-numerik
+            for k, v in pairs(returnVals) do
+                if type(k) ~= "number" then
+                    logData("Return."..tostring(k)..": "..serialize(v))
+                end
+            end
+        end
+    else
+        logData("Return: "..serialize(returnVals))
+    end
+end
 
-    local keys = {}
-    for k in pairs(tbl) do table.insert(keys, k) end
-    table.sort(keys, function(a,b)
-        return tostring(a) < tostring(b)
+-- ================================================================
+--  INVOKE DENGAN TIMEOUT
+--  Pakai coroutine terpisah agar tidak hang UI/loop utama
+--  Kalau timeout → anggap server tidak punya OnServerInvoke handler
+-- ================================================================
+local CFG = { invokeTimeout = 5 }  -- detik, ubah sesuai kebutuhan
+
+local invoking = false
+
+local function safeInvoke(label, ...)
+    if not PrompDetective then logErr("PrompDetective tidak ada"); return end
+    if invoking then logWarn("Invoke sebelumnya masih berjalan, tunggu..."); return end
+
+    local args = {...}
+    invoking = true
+    logSep()
+    logInfo("InvokeServer: "..label)
+    if #args > 0 then
+        local argStrs = {}
+        for _, a in ipairs(args) do table.insert(argStrs, serialize(a)) end
+        logData("Argumen: "..table.concat(argStrs, ", "))
+    else
+        logData("Argumen: (kosong)")
+    end
+    logInfo("Menunggu response server (timeout "..CFG.invokeTimeout.."s)...")
+
+    -- Jalankan invoke di coroutine terpisah
+    local done   = false
+    local result = nil
+    local errMsg = nil
+
+    task.spawn(function()
+        local ok, ret = pcall(function()
+            -- Kalau args ada, unpack; kalau tidak, kosong
+            if #args > 0 then
+                return PrompDetective:InvokeServer(table.unpack(args))
+            else
+                return PrompDetective:InvokeServer()
+            end
+        end)
+        if ok then
+            result = ret
+        else
+            errMsg = ret
+        end
+        done = true
     end)
 
-    if #keys == 0 then
-        log(prefix.."  (table kosong)", C.sep)
-        return
+    -- Tunggu dengan timeout
+    local elapsed = 0
+    local step    = 0.1
+    while not done and elapsed < CFG.invokeTimeout do
+        task.wait(step)
+        elapsed += step
     end
 
-    for _, k in ipairs(keys) do
-        local v = tbl[k]
-        local t = type(v)
-        local kStr = tostring(k)
-
-        if t == "function" then
-            log(prefix.."  🔧 "..kStr.." = function()", C.fn)
-
-        elseif t == "table" then
-            local subCount = 0
-            for _ in pairs(v) do subCount += 1 end
-            log(prefix.."  📦 "..kStr.." = table ("..subCount.." key)", C.tbl)
-            -- Satu level lebih dalam untuk tabel
-            if depth < 2 then
-                dumpTable(v, prefix.."    ["..kStr.."]", depth+1)
-            end
-
-        elseif t == "string" then
-            -- Potong kalau terlalu panjang
-            local disp = #v > 80 and (v:sub(1,80).."...") or v
-            log(prefix..'  📝 '..kStr..' = "'..disp..'"', C.str)
-
-        elseif t == "number" then
-            log(prefix.."  🔢 "..kStr.." = "..tostring(v), C.num)
-
-        elseif t == "boolean" then
-            log(prefix.."  ⚡ "..kStr.." = "..tostring(v), C.data)
-
-        elseif t == "userdata" or t == "Instance" then
-            local ok2, cn = pcall(function() return v.ClassName end)
-            log(prefix.."  🎮 "..kStr.." = Instance "..(ok2 and cn or "?"), C.data)
-
-        else
-            log(prefix.."  ◦ "..kStr.." = ("..t..") "..tostring(v), C.data)
-        end
-    end
-end
-
--- ================================================================
---  CARI SCRIPT DI SELURUH CLIENT
--- ================================================================
-local function findScript(nameContains)
-    local results = {}
-    local searchRoots = {
-        LP:WaitForChild("PlayerScripts", 5),
-        LP:WaitForChild("PlayerGui", 5),
-        LP:WaitForChild("Backpack", 5),
-        game:GetService("ReplicatedStorage"),
-        game:GetService("ReplicatedFirst"),
-        workspace,
-    }
-    for _, root in ipairs(searchRoots) do
-        if not root then continue end
-        local ok, descs = pcall(function() return root:GetDescendants() end)
-        if not ok then continue end
-        for _, obj in ipairs(descs) do
-            local nameOk, n = pcall(function() return obj.Name end)
-            if nameOk and string.find(string.lower(n), string.lower(nameContains)) then
-                table.insert(results, obj)
-            end
-        end
-    end
-    return results
-end
-
--- ================================================================
---  DUMP SCRIPT OBJECT (properties yang accessible)
--- ================================================================
-local function dumpScriptObject(obj)
-    logInfo("Class      : "..obj.ClassName)
-    logInfo("FullPath   : "..obj:GetFullName())
-
-    -- Coba baca .Source (biasanya blocked, tapi coba saja)
-    local srcOk, src = pcall(function() return obj.Source end)
-    if srcOk and src and #src > 0 then
-        logOk("Source ACCESSIBLE! ("..#src.." karakter)")
-        -- Print per baris, max 100 baris
-        local lines = src:split("\n")
-        local maxLines = math.min(#lines, 100)
-        for i = 1, maxLines do
-            log("  "..string.format("%3d",i).." │ "..lines[i], C.str)
-        end
-        if #lines > maxLines then
-            logWarn("  ... ("..#lines-maxLines.." baris lagi dipotong)")
-        end
+    if not done then
+        -- Timeout — invoke masih nge-hang di server
+        logErr("TIMEOUT setelah "..CFG.invokeTimeout.."s!")
+        logWarn("Kemungkinan penyebab:")
+        logWarn("  1. Server tidak punya OnServerInvoke callback")
+        logWarn("  2. Server punya callback tapi butuh kondisi tertentu")
+        logWarn("  3. Server menunggu argumen spesifik sebelum return")
+        logInfo("Coroutine invoke masih hidup di background (akan hang sampai game tutup)")
+        logInfo("Coba variasi argumen yang berbeda atau inspect server-side script")
+    elseif errMsg then
+        logErr("InvokeServer error: "..tostring(errMsg))
+        logInfo("Kemungkinan: server reject argumen atau remote tidak punya handler")
     else
-        logWarn("Source tidak bisa dibaca (Roblox blokir akses .Source di runtime)")
-    end
-
-    -- Coba disabled property
-    local disOk, dis = pcall(function() return obj.Disabled end)
-    if disOk then logInfo("Disabled   : "..tostring(dis)) end
-
-    -- Cek children
-    local ch = obj:GetChildren()
-    if #ch > 0 then
-        logInfo("Children ("..#ch.."):")
-        for _, c in ipairs(ch) do
-            log("  ["..c.ClassName.."] "..c.Name, C.data)
-        end
-    end
-end
-
--- ================================================================
---  REQUIRE MODULE — dump semua yang di-return
--- ================================================================
-local function tryRequire(moduleScript)
-    logInfo("Mencoba require()...")
-    local ok, result = pcall(require, moduleScript)
-    if not ok then
-        logErr("require() gagal: "..tostring(result))
-        logWarn("Kemungkinan: module error, dependency missing, atau diprotect")
-        return
-    end
-
-    local t = type(result)
-    logOk("require() BERHASIL! Return type: "..t)
-
-    if t == "table" then
-        local count = 0
-        for _ in pairs(result) do count += 1 end
-        logOk("Table berisi "..count.." key:")
-        logSep()
-        dumpTable(result, "")
-    elseif t == "function" then
-        logOk("Module return FUNCTION langsung")
-        -- Coba panggil tanpa argumen
-        logInfo("Mencoba panggil function()...")
-        local ok2, r2 = pcall(result)
-        if ok2 then
-            log("  Hasil: "..tostring(r2), C.ok)
+        logOk("InvokeServer BERHASIL! Server merespons.")
+        -- Tampilkan hasil selengkap mungkin
+        if result == nil then
+            logData("Server return: nil (handler ada tapi return kosong)")
+        elseif type(result) == "table" then
+            logOk("Server return TABLE:")
+            for k, v in pairs(result) do
+                logData("  ["..tostring(k).."] = "..serialize(v))
+            end
         else
-            logErr("Panggil gagal: "..tostring(r2))
+            logData("Server return: "..serialize(result))
+            logData("Type: "..typeof(result))
         end
-    else
-        logInfo("Module return: "..tostring(result))
     end
-end
 
--- ================================================================
---  AKSI DUMP DetectivePick
--- ================================================================
-btn_pick.MouseButton1Click:Connect(function()
     logSep()
-    logInfo("=== DUMP: DetectivePick (ModuleScript) ===")
+    invoking = false
+end
 
-    local results = findScript("DetectivePick")
-    if #results == 0 then
-        logErr("DetectivePick tidak ditemukan di client")
-        logSep(); return
-    end
+-- ================================================================
+--  LISTEN onDetectiveDied
+-- ================================================================
+local listening   = false
+local listenConn  = nil
 
-    for _, obj in ipairs(results) do
-        logSep()
-        logOk("Ditemukan: "..obj:GetFullName())
-        dumpScriptObject(obj)
+local function toggleListen()
+    if not onDetectiveDied then logErr("onDetectiveDied tidak ada"); return end
 
-        if obj.ClassName == "ModuleScript" then
+    if listening then
+        if listenConn then listenConn:Disconnect(); listenConn = nil end
+        listening = false
+        btn_listen.Text = "👂 Listen ON/OFF"
+        btn_listen.TextColor3 = Color3.fromRGB(80,210,120)
+        logWarn("Listener onDetectiveDied DIMATIKAN")
+    else
+        listening = true
+        btn_listen.Text = "👂 Listening... (klik stop)"
+        btn_listen.TextColor3 = Color3.fromRGB(60,240,100)
+
+        listenConn = onDetectiveDied.OnClientEvent:Connect(function(...)
+            local args = {...}
             logSep()
-            tryRequire(obj)
-        end
-    end
-    logSep()
-end)
-
--- ================================================================
---  AKSI DUMP DetectiveSystem
--- ================================================================
-btn_sys.MouseButton1Click:Connect(function()
-    logSep()
-    logInfo("=== DUMP: DetectiveSystem (LocalScript) ===")
-
-    local results = findScript("DetectiveSystem")
-    if #results == 0 then
-        logErr("DetectiveSystem tidak ditemukan di client")
-        logSep(); return
-    end
-
-    for _, obj in ipairs(results) do
-        logSep()
-        logOk("Ditemukan: "..obj:GetFullName())
-        dumpScriptObject(obj)
-
-        -- LocalScript tidak bisa require, tapi coba cek globals yang di-expose
-        logInfo("LocalScript tidak bisa di-require langsung.")
-        logInfo("Mencari globals yang mungkin di-set oleh script ini...")
-
-        -- Cek apakah script ini expose sesuatu via _G atau shared
-        local function checkGlobals(tbl, name)
-            if type(tbl) ~= "table" then return end
-            for k, v in pairs(tbl) do
-                local ks = tostring(k):lower()
-                if string.find(ks, "detective") or string.find(ks, "evidence") then
-                    log("  ["..name.."] "..tostring(k).." = "..tostring(v), C.fn)
+            logOk("onDetectiveDied FIRED dari server!")
+            logInfo("Jumlah argumen: "..#args)
+            if #args == 0 then
+                logData("(tidak ada argumen)")
+            else
+                for i, v in ipairs(args) do
+                    logData("Arg["..i.."] typeof="..typeof(v).."  val="..serialize(v))
                 end
             end
-        end
+            logSep()
+        end)
+        logOk("Listener onDetectiveDied AKTIF — menunggu server fire event ini...")
+    end
+end
 
-        local ok1, _ = pcall(checkGlobals, _G, "_G")
-        local ok2, _ = pcall(checkGlobals, shared, "shared")
+-- ================================================================
+--  FIRE SERVER (test arah sebaliknya)
+-- ================================================================
+local function testFireServer()
+    if not onDetectiveDied then logErr("onDetectiveDied tidak ada"); return end
+    logSep()
+    logInfo("FireServer() pada onDetectiveDied...")
+    logWarn("Event ini biasanya SERVER → CLIENT.")
+    logWarn("FireServer jarang punya handler, tapi dicoba untuk debug.")
+    local ok, err = pcall(function()
+        onDetectiveDied:FireServer()
+    end)
+    if ok then
+        logOk("FireServer terkirim tanpa error di sisi client")
+        logInfo("Cek server output untuk konfirmasi apakah ada OnServerEvent handler")
+    else
+        logErr("FireServer error: "..tostring(err))
     end
     logSep()
-end)
+end
 
 -- ================================================================
---  AKSI FIND SEMUA yang mengandung "detective"
+--  INSPECT
 -- ================================================================
-btn_find.MouseButton1Click:Connect(function()
+local function inspect()
     logSep()
-    logInfo("=== FIND SEMUA — keyword: detective, evidence ===")
+    logInfo("=== INSPECT ===")
 
-    local keywords = {"detective", "evidence", "Detective", "Evidence"}
-    local found = {}
-    local checked = {}
-
-    local searchRoots = {
-        LP:WaitForChild("PlayerScripts", 5),
-        LP:WaitForChild("PlayerGui", 5),
-        LP:WaitForChild("Backpack", 5),
-        game:GetService("ReplicatedStorage"),
-        game:GetService("ReplicatedFirst"),
-        workspace,
-    }
-
-    for _, root in ipairs(searchRoots) do
-        if not root then continue end
-        local ok, descs = pcall(function() return root:GetDescendants() end)
-        if not ok then continue end
-        for _, obj in ipairs(descs) do
-            if checked[obj] then continue end
-            checked[obj] = true
-            local nameOk, n = pcall(function() return obj.Name end)
-            if not nameOk then continue end
-            for _, kw in ipairs(keywords) do
-                if string.find(n, kw) then
-                    table.insert(found, obj)
-                    break
-                end
+    local function ins(obj, name)
+        if not obj then logErr(name.." = nil / tidak ditemukan"); return end
+        logOk(name.." ditemukan")
+        logData("  ClassName : "..obj.ClassName)
+        logData("  FullPath  : "..obj:GetFullName())
+        local ch = obj:GetChildren()
+        if #ch > 0 then
+            logInfo("  Children:")
+            for _, c in ipairs(ch) do
+                logData("    ["..c.ClassName.."] "..c.Name)
             end
+        else
+            logInfo("  Children: (tidak ada)")
         end
     end
 
-    logInfo("Total ditemukan: "..#found.." object")
-    logSep()
-    for _, obj in ipairs(found) do
-        local icon = "◦"
-        if obj.ClassName == "ModuleScript"  then icon = "📦" end
-        if obj.ClassName == "LocalScript"   then icon = "📜" end
-        if obj.ClassName == "Script"        then icon = "📜" end
-        if obj.ClassName == "RemoteEvent"   then icon = "📡" end
-        if obj.ClassName == "RemoteFunction"then icon = "📞" end
-        if obj.ClassName == "Folder"        then icon = "📁" end
-        log("  "..icon.." ["..obj.ClassName.."] "..obj:GetFullName(), C.data)
+    ins(PrompDetective, "PrompDetective (RemoteFunction)")
+    ins(onDetectiveDied, "onDetectiveDied (RemoteEvent)")
+
+    -- Tampilkan semua isi Remotes folder untuk konteks
+    if Remotes then
+        logInfo("--- Semua isi Remotes ---")
+        for _, obj in ipairs(Remotes:GetChildren()) do
+            logData("  ["..obj.ClassName.."] "..obj.Name)
+        end
     end
     logSep()
+end
+
+-- ================================================================
+--  BIND TOMBOL
+-- ================================================================
+btn_inv0.MouseButton1Click:Connect(function()
+    safeInvoke("kosong")
 end)
 
--- Clear
+btn_invArg.MouseButton1Click:Connect(function()
+    safeInvoke("arg=LocalPlayer", LP)
+end)
+
+btn_invStr.MouseButton1Click:Connect(function()
+    safeInvoke('"collect"', "collect")
+end)
+
+btn_invNum.MouseButton1Click:Connect(function()
+    safeInvoke("1, true", 1, true)
+end)
+
+btn_listen.MouseButton1Click:Connect(toggleListen)
+btn_fire.MouseButton1Click:Connect(testFireServer)
+btn_insp.MouseButton1Click:Connect(inspect)
 btn_clear.MouseButton1Click:Connect(function()
     for _, c in ipairs(scroll:GetChildren()) do
         if c:IsA("TextLabel") then c:Destroy() end
     end
-    logIdx=0; scroll.CanvasSize=UDim2.new(0,0,0,0)
+    logIdx = 0; scroll.CanvasSize = UDim2.new(0,0,0,0)
     logInfo("Log dibersihkan")
 end)
 
@@ -411,9 +421,23 @@ end)
 task.spawn(function()
     task.wait(0.3)
     logSep()
-    logInfo("Script Inspector siap.")
-    logInfo("Klik tombol untuk dump isi module/script.")
-    logWarn("Catatan: .Source diblokir Roblox di runtime.")
-    logWarn("Yang bisa dibaca: hasil require() → semua function & variable yang di-export.")
+    logInfo("Remote Debugger v2 siap")
+
+    local s1 = PrompDetective  and "📞 PrompDetective ["..PrompDetective.ClassName.."] ✓"  or "📞 PrompDetective ✗"
+    local s2 = onDetectiveDied and "  📡 onDetectiveDied ["..onDetectiveDied.ClassName.."] ✓" or "  📡 onDetectiveDied ✗"
+
+    if PrompDetective then logOk(s1) else logErr(s1) end
+    if onDetectiveDied then logOk(s2) else logErr(s2) end
+
+    statusLbl.Text = "  "..s1..s2
+    statusLbl.TextColor3 = (PrompDetective and onDetectiveDied)
+        and Color3.fromRGB(80,200,130)
+        or  Color3.fromRGB(220,130,60)
+
     logSep()
+    logInfo("Auto-listen onDetectiveDied aktif...")
+    toggleListen()
+    logSep()
+    logInfo("Siap. Klik tombol Invoke untuk test PrompDetective.")
+    logWarn("Jika invoke timeout → server butuh argumen/kondisi tertentu.")
 end)
