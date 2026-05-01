@@ -364,7 +364,7 @@ clearBtn.MouseButton1Click:Connect(function()
         if c:IsA("TextLabel") then c:Destroy() end
     end
     logIdx = 0
-    scroll.CanvasSize = UDim2.new(0,0,0,0)
+    scroll.CanvasSize = UDim2.new(0,0,0,0) 
     logInfo("Log dibersihkan")
 end)
 
